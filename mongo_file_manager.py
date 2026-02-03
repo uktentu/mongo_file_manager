@@ -128,5 +128,3 @@ class MongoFileManager:
             if os.path.exists(output_path):
                 os.remove(output_path)
             raise ValueError("Data integrity verification failed! Downloaded file is corrupted.")
-
-            
