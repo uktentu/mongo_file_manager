@@ -1,4 +1,4 @@
-import osf
+import os
 import hashlib
 import pymongo
 import gridfs
@@ -51,6 +51,16 @@ class MongoFileManager:
 
         # Check if file with same checksum already exists (deduplication check - optional, but good for efficiency)
         # For this specific task, we will just proceed to upload, but strictly ensuring data integrity.
+        duplicate_found = False
+        if self.bson_collection.find_one({"metadata.checksum": checksum}):
+            print(f"[INFO] File with checksum {checksum} already exists in BSON collection.")
+            duplicate_found = True
+        
+        # Check GridFS if not found in BSON (or check both, strictly speaking we just want to know if IT exists)
+        if not duplicate_found:
+             # Using find with limit 1 to check existence
+             if self.fs.find({"metadata.checksum": checksum}).limit(1).try_next():
+                 print(f"[INFO] File with checksum {checksum} already exists in GridFS.")
 
         if file_size >= self.gridfs_threshold_bytes:
             # Use GridFS
