@@ -51,7 +51,6 @@ class MongoFileManager:
 
         # Check if file with same checksum already exists (deduplication check - optional, but good for efficiency)
         # For this specific task, we will just proceed to upload, but strictly ensuring data integrity.
-        
         duplicate_found = False
         if self.bson_collection.find_one({"metadata.checksum": checksum}):
             print(f"[INFO] File with checksum {checksum} already exists in BSON collection.")
