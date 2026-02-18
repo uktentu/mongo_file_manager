@@ -1,0 +1,13 @@
+bundles:
+  - csi_id: "CSI-001"
+    region: "APAC"
+    regulation: "MAS-TRM"
+    json_config: "configs/mas_trm_report.json"
+    template: "templates/mas_trm_template.txt"
+    sql_file: "sql/mas_trm_query.sql"
+
+  - csi_id: "CSI-002"
+    region: "EU"
+    regulation: "GDPR"
+    json_config: "configs/gdpr_report.json"
+    sql_file: "sql/gdpr_query.sql"

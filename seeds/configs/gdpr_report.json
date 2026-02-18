@@ -1,0 +1,15 @@
+{
+    "name": "GDPR Data Privacy Report",
+    "outFileName": "gdpr_privacy_output",
+    "description": "Quarterly GDPR data privacy assessment for EU region",
+    "reportType": "privacy",
+    "schedule": "quarterly",
+    "parameters": {
+        "startDate": "2026-01-01",
+        "endDate": "2026-03-31",
+        "dataSubjects": [
+            "customers",
+            "employees"
+        ]
+    }
+}

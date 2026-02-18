@@ -1,0 +1,15 @@
+{
+    "name": "MAS TRM Compliance Report",
+    "outFileName": "mas_trm_output",
+    "description": "Monthly MAS TRM compliance report for APAC region",
+    "reportType": "compliance",
+    "schedule": "monthly",
+    "parameters": {
+        "startDate": "2026-01-01",
+        "endDate": "2026-01-31",
+        "entities": [
+            "entity_sg_01",
+            "entity_sg_02"
+        ]
+    }
+}
