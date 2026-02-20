@@ -12,7 +12,6 @@ Environment variables (also see .env.example at the repo root):
 │ MONGO_URI               │ Full MongoDB connection string                 │ mongodb://localhost:27017                │
 │ MONGO_DB_NAME           │ Target database name                          │ doc_management                           │
 │ MONGO_METADATA_COLLECTION│ Collection to store document metadata        │ metadata                                 │
-│ MONGO_COUNTERS_COLLECTION│ Collection for atomic counters (report_id)   │ counters                                 │
 │ MONGO_GRIDFS_BUCKET     │ GridFS bucket name for binary file storage    │ fs                                       │
 │ MONGO_MAX_POOL_SIZE     │ Connection pool size                          │ 50                                       │
 │ MONGO_CONNECT_TIMEOUT_MS│ Connect timeout in milliseconds               │ 5000                                     │
@@ -51,7 +50,6 @@ class Settings:
     mongo_uri: str
     mongo_db_name: str
     mongo_metadata_collection: str
-    mongo_counters_collection: str
     mongo_gridfs_bucket: str
     mongo_max_pool_size: int
     mongo_connect_timeout_ms: int
@@ -86,11 +84,6 @@ class Settings:
             "MONGO_METADATA_COLLECTION",
             default="metadata",
             description="Collection for document metadata",
-        )
-        self.mongo_counters_collection = _require_env(
-            "MONGO_COUNTERS_COLLECTION",
-            default="counters",
-            description="Collection for atomic counters (report_id)",
         )
         self.mongo_gridfs_bucket = _require_env(
             "MONGO_GRIDFS_BUCKET",

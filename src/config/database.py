@@ -22,7 +22,6 @@ class DatabaseManager:
         self._uri = uri or settings.mongo_uri
         self._db_name = db_name or settings.mongo_db_name
         self._col_metadata = settings.mongo_metadata_collection
-        self._col_counters = settings.mongo_counters_collection
         self._bucket_name = settings.mongo_gridfs_bucket
         self._client: MongoClient | None = None
         self._db = None
@@ -54,9 +53,9 @@ class DatabaseManager:
             except Exception:
                 host_display = "unknown"
             logger.info(
-                "database.connected host=%s db=%s metadata=%s counters=%s gridfs=%s transactions=%s",
+                "database.connected host=%s db=%s metadata=%s gridfs=%s transactions=%s",
                 host_display, self._db_name,
-                self._col_metadata, self._col_counters, self._bucket_name,
+                self._col_metadata, self._bucket_name,
                 self._supports_transactions,
             )
         except (ConnectionFailure, ServerSelectionTimeoutError) as exc:
@@ -134,9 +133,6 @@ class DatabaseManager:
     def metadata_collection(self):
         return self.db[self._col_metadata]
 
-    @property
-    def counters_collection(self):
-        return self.db[self._col_counters]
 
     @property
     def fs(self) -> GridFS:
