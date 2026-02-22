@@ -281,13 +281,37 @@ def fetch(report_id, csi_id, region, regulation):
 @click.option("--version", "-V", "version", default=None, type=int, help="Specific version (default: active).")
 @click.option("--no-verify", is_flag=True, help="Skip checksum verification.")
 @click.option("--force", is_flag=True, help="Export even if checksums don't match.")
-def export(report_id, output_dir, version, no_verify, force):
-    """Export a bundle's files from MongoDB back to disk."""
+@click.option(
+    "--file", "file_keys", multiple=True,
+    type=click.Choice(["json_config", "sql_file", "template"], case_sensitive=False),
+    help="File(s) to export. Repeat to export multiple. Omit to export all.",
+)
+def export(report_id, output_dir, version, no_verify, force, file_keys):
+    """Export a bundle's files from MongoDB back to disk.
+
+    Examples:
+
+    \b
+      # Export all files (default)
+      python -m src.cli export --report-id 0000003 -o ./out
+
+    \b
+      # Export only the SQL file
+      python -m src.cli export --report-id 0000003 -o ./out --file sql_file
+
+    \b
+      # Export SQL + template only
+      python -m src.cli export --report-id 0000003 -o ./out --file sql_file --file template
+    """
     from src.services.export_service import export_bundle
 
     try:
         db = get_db()
-        result = export_bundle(report_id=report_id, output_dir=output_dir, version=version, verify_checksums=not no_verify, force=force)
+        selected_files = set(file_keys) if file_keys else None
+        result = export_bundle(
+            report_id=report_id, output_dir=output_dir, version=version,
+            verify_checksums=not no_verify, force=force, files=selected_files,
+        )
 
         files_info = "\n".join(f"  [bold]{k}:[/] {v}" for k, v in result.get("files", {}).items())
         checksums_info = "\n".join(
@@ -364,7 +388,6 @@ def _display_record_detail(record: dict):
         f"[bold]Region:[/]      {record.get('region')}\n"
         f"[bold]Regulation:[/]  {record.get('regulation')}\n"
         f"[bold]Name:[/]        {record.get('name')}\n"
-        f"[bold]Out File:[/]    {record.get('out_file_name')}\n"
         f"[bold]Version:[/]     {record.get('version')}\n"
         f"[bold]Active:[/]      {record.get('active')}\n"
         f"\n[bold underline]Files:[/]\n"

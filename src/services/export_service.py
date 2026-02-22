@@ -13,6 +13,8 @@ from src.utils.checksum import compute_bytes_checksum
 
 logger = logging.getLogger(__name__)
 
+VALID_FILE_KEYS = {"json_config", "sql_file", "template"}
+
 
 def export_bundle(
     report_id: str,
@@ -20,7 +22,21 @@ def export_bundle(
     version: Optional[int] = None,
     verify_checksums: bool = True,
     force: bool = False,
+    files: Optional[set[str]] = None,
 ) -> dict:
+    """
+    Export files from a stored bundle to disk.
+
+    Args:
+        report_id:        7-digit report ID.
+        output_dir:       Directory to write exported files into.
+        version:          Specific version to export (default: active).
+        verify_checksums: Validate checksums after download.
+        force:            Write files even on checksum mismatch.
+        files:            Optional set of file keys to export.
+                          Valid values: "json_config", "sql_file", "template".
+                          If None or empty, all available files are exported.
+    """
     db = get_db()
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -42,75 +58,81 @@ def export_bundle(
         "output_dir": str(out_path),
     }
 
+    # Normalise filter: None / empty-set → export all
+    requested = files if files else VALID_FILE_KEYS
+
     contents = record.get("file_contents", {})
     original_files = record.get("original_files", {})
     checksums = record.get("checksums", {})
     mismatches = []
 
     # --- json_config ---
-    json_id_str = contents.get("json_config_id")
-    json_filename = original_files.get("json_config", "config.json")
-    if json_id_str is not None:
-        try:
-            json_bytes, _ = download_from_gridfs(db.fs, ObjectId(json_id_str))
-            json_path = out_path / json_filename
-            json_path.write_bytes(json_bytes)
-            result["files"]["json_config"] = str(json_path)
+    if "json_config" in requested:
+        json_id_str = contents.get("json_config_id")
+        json_filename = original_files.get("json_config", "config.json")
+        if json_id_str is not None:
+            try:
+                json_bytes, _ = download_from_gridfs(db.fs, ObjectId(json_id_str))
+                json_path = out_path / json_filename
+                json_path.write_bytes(json_bytes)
+                result["files"]["json_config"] = str(json_path)
 
-            if verify_checksums and checksums.get("json_config"):
-                actual = compute_bytes_checksum(json_bytes)
-                expected = checksums["json_config"]
-                matched = actual == expected
-                result["checksum_verified"]["json_config"] = matched
-                if not matched:
-                    mismatches.append(("json_config", json_path, expected, actual))
-        except Exception as exc:
-            logger.error("export.json_config_failed report_id=%s error=%s", report_id, exc)
-            result["files"]["json_config"] = f"ERROR: {exc}"
-    else:
-        logger.warning("export.json_config_missing report_id=%s", report_id)
+                if verify_checksums and checksums.get("json_config"):
+                    actual = compute_bytes_checksum(json_bytes)
+                    expected = checksums["json_config"]
+                    matched = actual == expected
+                    result["checksum_verified"]["json_config"] = matched
+                    if not matched:
+                        mismatches.append(("json_config", json_path, expected, actual))
+            except Exception as exc:
+                logger.error("export.json_config_failed report_id=%s error=%s", report_id, exc)
+                result["files"]["json_config"] = f"ERROR: {exc}"
+        else:
+            logger.warning("export.json_config_missing report_id=%s", report_id)
 
     # --- sql_file ---
-    sql_id_str = contents.get("sql_file_id")
-    sql_filename = original_files.get("sql_file", "query.sql")
-    if sql_id_str is not None:
-        try:
-            sql_bytes, _ = download_from_gridfs(db.fs, ObjectId(sql_id_str))
-            sql_path = out_path / sql_filename
-            sql_path.write_bytes(sql_bytes)
-            result["files"]["sql_file"] = str(sql_path)
+    if "sql_file" in requested:
+        sql_id_str = contents.get("sql_file_id")
+        sql_filename = original_files.get("sql_file", "query.sql")
+        if sql_id_str is not None:
+            try:
+                sql_bytes, _ = download_from_gridfs(db.fs, ObjectId(sql_id_str))
+                sql_path = out_path / sql_filename
+                sql_path.write_bytes(sql_bytes)
+                result["files"]["sql_file"] = str(sql_path)
 
-            if verify_checksums and checksums.get("sql_file"):
-                actual = compute_bytes_checksum(sql_bytes)
-                expected = checksums["sql_file"]
-                matched = actual == expected
-                result["checksum_verified"]["sql_file"] = matched
-                if not matched:
-                    mismatches.append(("sql_file", sql_path, expected, actual))
-        except Exception as exc:
-            logger.error("export.sql_failed report_id=%s error=%s", report_id, exc)
-            result["files"]["sql_file"] = f"ERROR: {exc}"
+                if verify_checksums and checksums.get("sql_file"):
+                    actual = compute_bytes_checksum(sql_bytes)
+                    expected = checksums["sql_file"]
+                    matched = actual == expected
+                    result["checksum_verified"]["sql_file"] = matched
+                    if not matched:
+                        mismatches.append(("sql_file", sql_path, expected, actual))
+            except Exception as exc:
+                logger.error("export.sql_failed report_id=%s error=%s", report_id, exc)
+                result["files"]["sql_file"] = f"ERROR: {exc}"
 
     # --- template ---
-    template_id_str = contents.get("template_id")
-    template_filename = original_files.get("template")
-    if template_id_str is not None and template_filename:
-        try:
-            template_bytes, _ = download_from_gridfs(db.fs, ObjectId(template_id_str))
-            template_path = out_path / template_filename
-            template_path.write_bytes(template_bytes)
-            result["files"]["template"] = str(template_path)
+    if "template" in requested:
+        template_id_str = contents.get("template_id")
+        template_filename = original_files.get("template")
+        if template_id_str is not None and template_filename:
+            try:
+                template_bytes, _ = download_from_gridfs(db.fs, ObjectId(template_id_str))
+                template_path = out_path / template_filename
+                template_path.write_bytes(template_bytes)
+                result["files"]["template"] = str(template_path)
 
-            if verify_checksums and checksums.get("template"):
-                actual = compute_bytes_checksum(template_bytes)
-                expected = checksums["template"]
-                matched = actual == expected
-                result["checksum_verified"]["template"] = matched
-                if not matched:
-                    mismatches.append(("template", template_path, expected, actual))
-        except Exception as exc:
-            logger.error("export.template_failed report_id=%s error=%s", report_id, exc)
-            result["files"]["template"] = f"ERROR: {exc}"
+                if verify_checksums and checksums.get("template"):
+                    actual = compute_bytes_checksum(template_bytes)
+                    expected = checksums["template"]
+                    matched = actual == expected
+                    result["checksum_verified"]["template"] = matched
+                    if not matched:
+                        mismatches.append(("template", template_path, expected, actual))
+            except Exception as exc:
+                logger.error("export.template_failed report_id=%s error=%s", report_id, exc)
+                result["files"]["template"] = f"ERROR: {exc}"
 
     if mismatches and not force:
         for file_type, file_path, expected, actual in mismatches:
