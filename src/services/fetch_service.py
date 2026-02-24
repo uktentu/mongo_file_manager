@@ -1,7 +1,7 @@
 """Fetch service — query operations for metadata retrieval."""
 
 import logging
-from typing import Optional
+from typing import Any
 
 from src.config.database import get_db
 from src.errors.exceptions import RecordNotFoundError
@@ -22,7 +22,7 @@ def fetch_active_by_unique_id(unique_id: str) -> dict:
 
 def fetch_by_csi_id(csi_id: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
     db = get_db()
-    query = {"csi_id": csi_id}
+    query: dict[str, Any] = {"csi_id": csi_id}
     if active_only:
         query["active"] = True
     results = list(db.metadata_collection.find(query).limit(limit))
@@ -32,7 +32,7 @@ def fetch_by_csi_id(csi_id: str, active_only: bool = True, limit: int = DEFAULT_
 
 def fetch_by_region(region: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
     db = get_db()
-    query = {"region": region}
+    query: dict[str, Any] = {"region": region}
     if active_only:
         query["active"] = True
     results = list(db.metadata_collection.find(query).limit(limit))
@@ -42,7 +42,7 @@ def fetch_by_region(region: str, active_only: bool = True, limit: int = DEFAULT_
 
 def fetch_by_regulation(regulation: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
     db = get_db()
-    query = {"regulation": regulation}
+    query: dict[str, Any] = {"regulation": regulation}
     if active_only:
         query["active"] = True
     results = list(db.metadata_collection.find(query).limit(limit))

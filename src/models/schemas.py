@@ -1,7 +1,7 @@
 """Pydantic models for data validation and serialization."""
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,10 +18,11 @@ class OriginalFiles(BaseModel):
     sql_file: str
 
 
-class FileReferences(BaseModel):
-    json_config_id: Any
-    template_gridfs_id: Optional[Any] = None
-    sql_gridfs_id: Any
+class FileContents(BaseModel):
+    """Stores GridFS ObjectIds for file contents."""
+    json_config_id: str
+    sql_file_id: str
+    template_id: Optional[str] = None
 
 
 class Checksums(BaseModel):
@@ -44,7 +45,7 @@ class MetadataDocument(BaseModel):
     name: str
     out_file_name: str
     original_files: OriginalFiles
-    file_references: FileReferences
+    file_contents: FileContents
     checksums: Checksums
     file_sizes: FileSizes
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

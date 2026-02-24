@@ -2,7 +2,6 @@
 
 import logging
 import sys
-from pathlib import Path
 
 import click
 from rich.console import Console
@@ -295,16 +294,14 @@ def cleanup(uid, purge_all, keep, max_age_days, dry_run):
             result = purge_by_age(max_age_days=max_age_days, dry_run=dry_run)
             console.print(Panel(
                 f"[bold]{'[DRY RUN] ' if dry_run else ''}Age-based cleanup[/]\n\n"
-                f"Records older than {max_age_days} days purged: [bold]{result['purged']}[/]\n"
-                f"GridFS files freed: [bold]{result['freed_gridfs']}[/]",
+                f"Records older than {max_age_days} days purged: [bold]{result['purged']}[/]",
                 title="🧹 Cleanup", border_style="yellow",
             ))
         elif uid:
             result = purge_old_versions(uid, keep_versions=keep, dry_run=dry_run)
             console.print(Panel(
                 f"[bold]{'[DRY RUN] ' if dry_run else ''}Version cleanup for: {uid}[/]\n\n"
-                f"Purged: [bold]{result['purged']}[/]\nKept: [bold]{result['kept']}[/]\n"
-                f"GridFS files freed: [bold]{result['freed_gridfs']}[/]",
+                f"Purged: [bold]{result['purged']}[/]\nKept: [bold]{result['kept']}[/]",
                 title="🧹 Cleanup", border_style="yellow",
             ))
         elif purge_all:
@@ -312,8 +309,7 @@ def cleanup(uid, purge_all, keep, max_age_days, dry_run):
             console.print(Panel(
                 f"[bold]{'[DRY RUN] ' if dry_run else ''}Global cleanup[/]\n\n"
                 f"Records processed: [bold]{result['records_processed']}[/]\n"
-                f"Total purged: [bold]{result['total_purged']}[/]\n"
-                f"GridFS files freed: [bold]{result['total_freed_gridfs']}[/]",
+                f"Total purged: [bold]{result['total_purged']}[/]",
                 title="🧹 Cleanup", border_style="yellow",
             ))
         else:

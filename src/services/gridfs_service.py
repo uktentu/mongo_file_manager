@@ -17,15 +17,11 @@ logger = logging.getLogger(__name__)
 class GridFSOrphanTracker:
     """Tracks GridFS uploads and config inserts for cleanup if the parent operation fails."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._pending_gridfs: list[tuple[GridFS, ObjectId]] = []
-        self._pending_configs: list[tuple] = []
 
     def track(self, bucket: GridFS, gridfs_id: ObjectId) -> None:
         self._pending_gridfs.append((bucket, gridfs_id))
-
-    def track_config(self, collection, config_id: ObjectId) -> None:
-        self._pending_configs.append((collection, config_id))
 
     def cleanup(self) -> int:
         cleaned = 0
@@ -36,24 +32,15 @@ class GridFSOrphanTracker:
                 cleaned += 1
             except Exception as exc:
                 logger.error("gridfs.orphan_cleanup_failed id=%s error=%s", gridfs_id, exc)
-        for collection, config_id in self._pending_configs:
-            try:
-                collection.delete_one({"_id": config_id})
-                logger.info("gridfs.orphan_config_cleaned id=%s", config_id)
-                cleaned += 1
-            except Exception as exc:
-                logger.error("gridfs.orphan_config_cleanup_failed id=%s error=%s", config_id, exc)
         self._pending_gridfs.clear()
-        self._pending_configs.clear()
         return cleaned
 
     def clear(self) -> None:
         self._pending_gridfs.clear()
-        self._pending_configs.clear()
 
     @property
     def pending_count(self) -> int:
-        return len(self._pending_gridfs) + len(self._pending_configs)
+        return len(self._pending_gridfs)
 
 
 @retry_on_failure(max_retries=3)

@@ -3,13 +3,12 @@
 import io
 import logging
 import os
-import secrets
 import tempfile
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query, Depends, Security
@@ -113,7 +112,7 @@ async def list_records(
     skip: int = Query(0, ge=0),
 ):
     db = get_db()
-    query = {}
+    query: dict[str, Any] = {}
     if active_only:
         query["active"] = True
     if region:

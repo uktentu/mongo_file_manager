@@ -1,4 +1,4 @@
-"""MongoDB and GridFS connection management."""
+"""MongoDB connection management — single metadata collection."""
 
 import os
 import logging
@@ -25,8 +25,7 @@ class DatabaseManager:
         self._db_name = db_name or os.getenv("MONGO_DB_NAME", "doc_management")
         self._client: MongoClient | None = None
         self._db = None
-        self._templates_gridfs: GridFS | None = None
-        self._sqlfiles_gridfs: GridFS | None = None
+        self._fs: GridFS | None = None
         self._supports_transactions: bool = False
 
     def connect(self):
@@ -40,9 +39,11 @@ class DatabaseManager:
             )
             self._client.admin.command("ping")
             self._db = self._client[self._db_name]
+
+            # Initialize a single, unified GridFS bucket
+            self._fs = GridFS(self._db)
+
             self._detect_transaction_support()
-            self._templates_gridfs = GridFS(self._db, collection="templates")
-            self._sqlfiles_gridfs = GridFS(self._db, collection="sqlfiles")
             self._ensure_indexes()
 
             logger.info(
@@ -120,28 +121,16 @@ class DatabaseManager:
         return self.db["metadata"]
 
     @property
-    def configs_collection(self):
-        return self.db["configs"]
-
-    @property
-    def templates_gridfs(self) -> GridFS:
-        if self._templates_gridfs is None:
-            raise DatabaseError("Database not connected. Call connect() first.")
-        return self._templates_gridfs
-
-    @property
-    def sqlfiles_gridfs(self) -> GridFS:
-        if self._sqlfiles_gridfs is None:
-            raise DatabaseError("Database not connected. Call connect() first.")
-        return self._sqlfiles_gridfs
+    def fs(self) -> GridFS:
+        if self._fs is None:
+            raise DatabaseError("Database not connected.")
+        return self._fs
 
     def close(self):
         if self._client:
             self._client.close()
             self._client = None
             self._db = None
-            self._templates_gridfs = None
-            self._sqlfiles_gridfs = None
             logger.info("database.disconnected")
 
     def start_session(self):

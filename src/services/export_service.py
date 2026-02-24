@@ -1,9 +1,10 @@
-"""Export service — reconstruct bundle files from MongoDB to disk."""
+"""Export service — reconstruct bundle files from the metadata collection."""
 
-import json
 import logging
 from pathlib import Path
 from typing import Optional
+
+from bson import ObjectId
 
 from src.config.database import get_db
 from src.errors.exceptions import ChecksumMismatchError, RecordNotFoundError
@@ -41,69 +42,74 @@ def export_bundle(
         "output_dir": str(out_path),
     }
 
-    refs = record.get("file_references", {})
+    contents = record.get("file_contents", {})
     original_files = record.get("original_files", {})
     checksums = record.get("checksums", {})
     mismatches = []
 
-    json_config_id = refs.get("json_config_id")
+    # --- json_config ---
+    json_id_str = contents.get("json_config_id")
     json_filename = original_files.get("json_config", "config.json")
-    if json_config_id:
-        config_doc = db.configs_collection.find_one({"_id": json_config_id})
-        if config_doc and "config" in config_doc:
+    if json_id_str is not None:
+        try:
+            json_bytes, _ = download_from_gridfs(db.fs, ObjectId(json_id_str))
             json_path = out_path / json_filename
-            config_content = json.dumps(config_doc["config"], indent=2)
-            json_path.write_text(config_content, encoding="utf-8")
+            json_path.write_bytes(json_bytes)
             result["files"]["json_config"] = str(json_path)
 
             if verify_checksums and checksums.get("json_config"):
-                actual = compute_bytes_checksum(json_path.read_bytes())
+                actual = compute_bytes_checksum(json_bytes)
                 expected = checksums["json_config"]
                 matched = actual == expected
                 result["checksum_verified"]["json_config"] = matched
                 if not matched:
                     mismatches.append(("json_config", json_path, expected, actual))
-        else:
-            logger.warning("export.config_not_found id=%s", json_config_id)
+        except Exception as exc:
+            logger.error("export.json_config_failed unique_id=%s error=%s", unique_id, exc)
+            result["files"]["json_config"] = f"ERROR: {exc}"
+    else:
+        logger.warning("export.json_config_missing unique_id=%s", unique_id)
 
-    sql_gridfs_id = refs.get("sql_gridfs_id")
+    # --- sql_file ---
+    sql_id_str = contents.get("sql_file_id")
     sql_filename = original_files.get("sql_file", "query.sql")
-    if sql_gridfs_id:
+    if sql_id_str is not None:
         try:
-            data, metadata = download_from_gridfs(db.sqlfiles_gridfs, sql_gridfs_id)
+            sql_bytes, _ = download_from_gridfs(db.fs, ObjectId(sql_id_str))
             sql_path = out_path / sql_filename
-            sql_path.write_bytes(data)
+            sql_path.write_bytes(sql_bytes)
             result["files"]["sql_file"] = str(sql_path)
 
             if verify_checksums and checksums.get("sql_file"):
-                actual = compute_bytes_checksum(data)
+                actual = compute_bytes_checksum(sql_bytes)
                 expected = checksums["sql_file"]
                 matched = actual == expected
                 result["checksum_verified"]["sql_file"] = matched
                 if not matched:
                     mismatches.append(("sql_file", sql_path, expected, actual))
         except Exception as exc:
-            logger.error("export.sql_failed id=%s error=%s", sql_gridfs_id, exc)
+            logger.error("export.sql_failed unique_id=%s error=%s", unique_id, exc)
             result["files"]["sql_file"] = f"ERROR: {exc}"
 
-    template_gridfs_id = refs.get("template_gridfs_id")
+    # --- template ---
+    template_id_str = contents.get("template_id")
     template_filename = original_files.get("template")
-    if template_gridfs_id and template_filename:
+    if template_id_str is not None and template_filename:
         try:
-            data, metadata = download_from_gridfs(db.templates_gridfs, template_gridfs_id)
+            template_bytes, _ = download_from_gridfs(db.fs, ObjectId(template_id_str))
             template_path = out_path / template_filename
-            template_path.write_bytes(data)
+            template_path.write_bytes(template_bytes)
             result["files"]["template"] = str(template_path)
 
             if verify_checksums and checksums.get("template"):
-                actual = compute_bytes_checksum(data)
+                actual = compute_bytes_checksum(template_bytes)
                 expected = checksums["template"]
                 matched = actual == expected
                 result["checksum_verified"]["template"] = matched
                 if not matched:
                     mismatches.append(("template", template_path, expected, actual))
         except Exception as exc:
-            logger.error("export.template_failed id=%s error=%s", template_gridfs_id, exc)
+            logger.error("export.template_failed unique_id=%s error=%s", unique_id, exc)
             result["files"]["template"] = f"ERROR: {exc}"
 
     if mismatches and not force:
