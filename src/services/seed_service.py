@@ -435,8 +435,7 @@ def modify_record_by_id(
                 report_id=report_id,
                 csi_id=existing["csi_id"], region=existing["region"],
                 regulation=existing["regulation"],
-                name=config["name"] if config else existing["name"],
-                out_file_name=config["outFileName"] if config else existing["out_file_name"],
+                name=config["report"]["name"] if config else existing["name"],
                 original_files=OriginalFiles(
                     json_config=new_json_original,
                     template=new_template_original,
@@ -528,7 +527,7 @@ def _create_record(bundle: dict, config: dict, precomputed_checksums: dict | Non
             report_id=report_id,
             csi_id=bundle["csi_id"], region=bundle["region"],
             regulation=bundle["regulation"],
-            name=config["name"], out_file_name=config["outFileName"],
+            name=config["report"]["name"],
             original_files=OriginalFiles(
                 json_config=json_config_path.name,
                 template=template_path.name if template_path else None,
@@ -681,7 +680,7 @@ def _modify_record(
                 report_id=report_id,
                 csi_id=bundle["csi_id"], region=bundle["region"],
                 regulation=bundle["regulation"],
-                name=config["name"], out_file_name=config["outFileName"],
+                name=config["report"]["name"],
                 original_files=OriginalFiles(
                     json_config=json_original,
                     template=template_original,

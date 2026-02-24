@@ -207,26 +207,23 @@ def validate_json_config(config_path: str | Path, index: int = 0) -> dict[str, A
             f"Bundle #{index}: JSON config root must be a JSON object, got {type(config).__name__}"
         )
 
-    # Required fields
-    required_fields = ["name", "outFileName"]
-    missing = [f for f in required_fields if f not in config or not str(config[f]).strip()]
-    if missing:
+    # Validate nested report.name
+    report_block = config.get("report")
+    if not isinstance(report_block, dict):
         raise ValidationError(
-            f"Bundle #{index}: JSON config '{path.name}' missing required fields: {missing}",
-            details={"file": str(path), "missing_fields": missing},
+            f"Bundle #{index}: JSON config '{path.name}' missing required 'report' object",
+            details={"file": str(path), "missing_fields": ["report"]},
+        )
+    report_name = report_block.get("name")
+    if not report_name or not isinstance(report_name, str) or not report_name.strip():
+        raise ValidationError(
+            f"Bundle #{index}: JSON config '{path.name}' missing required field 'report.name'",
+            details={"file": str(path), "missing_fields": ["report.name"]},
         )
 
-    # Type checks
-    for field in required_fields:
-        if not isinstance(config[field], str):
-            raise ValidationError(
-                f"Bundle #{index}: JSON config field '{field}' must be a string, "
-                f"got {type(config[field]).__name__}"
-            )
-
     logger.debug(
-        "validator.json_config_ok index=%d path=%s name=%s outFileName=%s",
-        index, path.name, config["name"], config["outFileName"],
+        "validator.json_config_ok index=%d path=%s report.name=%s",
+        index, path.name, report_name,
     )
     return config
 

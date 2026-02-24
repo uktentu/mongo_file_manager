@@ -43,7 +43,6 @@ class MetadataDocument(BaseModel):
     region: str
     regulation: str
     name: str
-    out_file_name: str
     original_files: OriginalFiles
     file_contents: FileContents
     checksums: Checksums
