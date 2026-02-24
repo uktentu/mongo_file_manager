@@ -379,12 +379,4 @@ uvicorn src.api:app --reload --port 8000
 
 All endpoints except `/api/health` require `X-API-Key` header when `API_KEY` is set.
 
----
 
-## Running Tests
-
-```bash
-python -m pytest tests/unit -v
-```
-
-49 unit tests covering checksums, unique ID generation, validation, retry logic, and orphan tracking.
