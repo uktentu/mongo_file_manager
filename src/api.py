@@ -11,13 +11,18 @@ from pathlib import Path
 from typing import Optional, Any
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, Query, Depends, Security
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Depends, Security, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from src.config.database import get_db, reset_db
-from src.errors.exceptions import SeederError, RecordNotFoundError
+from src.errors.exceptions import (
+    SeederError,
+    RecordNotFoundError,
+    ValidationError,
+    DuplicateRecordError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +55,38 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RecordNotFoundError)
+async def record_not_found_handler(request: Request, exc: RecordNotFoundError):
+    return JSONResponse(
+        status_code=404,
+        content={"error": "Not Found", "message": exc.message, "details": exc.details},
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_error_handler(request: Request, exc: ValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Bad Request", "message": exc.message, "details": exc.details},
+    )
+
+
+@app.exception_handler(DuplicateRecordError)
+async def duplicate_record_handler(request: Request, exc: DuplicateRecordError):
+    return JSONResponse(
+        status_code=409,
+        content={"error": "Conflict", "message": exc.message, "details": exc.details},
+    )
+
+
+@app.exception_handler(SeederError)
+async def seeder_error_handler(request: Request, exc: SeederError):
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal Server Error", "message": exc.message, "details": exc.details},
+    )
 
 
 class HealthResponse(BaseModel):
@@ -140,7 +177,7 @@ async def get_record(unique_id: str, version: Optional[int] = Query(None)):
         record = db.metadata_collection.find_one({"unique_id": unique_id, "active": True})
 
     if not record:
-        raise HTTPException(status_code=404, detail=f"Record not found: {unique_id}")
+        raise RecordNotFoundError(f"Record not found: {unique_id}")
 
     logger.info("api.get_record unique_id=%s version=%s", unique_id, record.get("version"))
     return _serialize_record(record)
@@ -151,7 +188,7 @@ async def get_record_history(unique_id: str):
     db = get_db()
     records = list(db.metadata_collection.find({"unique_id": unique_id}).sort("version", 1))
     if not records:
-        raise HTTPException(status_code=404, detail=f"No records found: {unique_id}")
+        raise RecordNotFoundError(f"No records found: {unique_id}")
 
     logger.info("api.get_history unique_id=%s versions=%d", unique_id, len(records))
     return {
@@ -165,55 +202,43 @@ async def get_record_history(unique_id: str):
 async def export_record(unique_id: str, version: Optional[int] = Query(None)):
     from src.services.export_service import export_bundle
 
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = export_bundle(
-                unique_id=unique_id, output_dir=tmpdir,
-                version=version, verify_checksums=True,
-            )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = export_bundle(
+            unique_id=unique_id, output_dir=tmpdir,
+            version=version, verify_checksums=True,
+        )
 
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                for file_type, file_path in result.get("files", {}).items():
-                    if not str(file_path).startswith("ERROR"):
-                        p = Path(file_path)
-                        if p.exists():
-                            zf.write(p, arcname=p.name)
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_type, file_path in result.get("files", {}).items():
+                if not str(file_path).startswith("ERROR"):
+                    p = Path(file_path)
+                    if p.exists():
+                        zf.write(p, arcname=p.name)
 
-            zip_buffer.seek(0)
-            filename = f"{unique_id}_v{result.get('version', 'latest')}.zip"
+        zip_buffer.seek(0)
+        filename = f"{unique_id}_v{result.get('version', 'latest')}.zip"
 
-            logger.info("api.export unique_id=%s version=%s", unique_id, result.get("version"))
-            return StreamingResponse(
-                zip_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={filename}"},
-            )
-
-    except RecordNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except SeederError as exc:
-        raise HTTPException(status_code=500, detail=exc.message)
+        logger.info("api.export unique_id=%s version=%s", unique_id, result.get("version"))
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
 
 
 @app.post("/api/cleanup", dependencies=[Depends(verify_api_key)])
 async def run_cleanup(request: CleanupRequest):
     from src.services.cleanup_service import purge_old_versions, purge_all_old_versions, purge_by_age
 
-    try:
-        if request.max_age_days:
-            result = purge_by_age(max_age_days=request.max_age_days, dry_run=request.dry_run)
-        elif request.unique_id:
-            result = purge_old_versions(request.unique_id, keep_versions=request.keep_versions, dry_run=request.dry_run)
-        elif request.purge_all:
-            result = purge_all_old_versions(keep_versions=request.keep_versions, dry_run=request.dry_run)
-        else:
-            raise HTTPException(status_code=400, detail="Specify unique_id, purge_all, or max_age_days.")
+    if request.max_age_days:
+        result = purge_by_age(max_age_days=request.max_age_days, dry_run=request.dry_run)
+    elif request.unique_id:
+        result = purge_old_versions(request.unique_id, keep_versions=request.keep_versions, dry_run=request.dry_run)
+    elif request.purge_all:
+        result = purge_all_old_versions(keep_versions=request.keep_versions, dry_run=request.dry_run)
+    else:
+        raise HTTPException(status_code=400, detail="Specify unique_id, purge_all, or max_age_days.")
 
-        logger.info("api.cleanup result=%s", result)
-        return result
-
-    except RecordNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except SeederError as exc:
-        raise HTTPException(status_code=500, detail=exc.message)
+    logger.info("api.cleanup result=%s", result)
+    return result
