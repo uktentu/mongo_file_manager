@@ -6,18 +6,26 @@ A document bundle management system for regulatory documents. Stores versioned b
 
 ## Quick Start
 
+### 1. Production Deployment (Recommended)
+You can instantly deploy the entire REST API, MongoDB Database, and automated bundle seeder securely via Docker Compose:
+```bash
+cp .env.example .env
+# Edit .env with your secrets if desired
+docker-compose up -d --build
+```
+
+### 2. Manual Setup
 ```bash
 # 1. Install dependencies
 pip install -r requirements.txt
 
 # 2. Configure MongoDB connection
 cp .env.example .env
-# Edit .env with your MongoDB URI
 
 # 3. Seed bundles from manifest
 python -m src.cli seed seeds/seed.yaml
 
-# 4. Or start the REST API
+# 4. Or start the REST API locally
 uvicorn src.api:app --reload --port 8000
 ```
 
@@ -54,14 +62,12 @@ API_KEY=              # leave empty to disable auth (dev mode)
 │   │   ├── cleanup_service.py ← Purge old versions
 │   │   ├── gridfs_service.py  ← GridFS file operations
 │   │   └── audit_service.py   ← Audit log entries
-│   ├── utils/
-│   │   ├── checksum.py        ← SHA-256 hashing
-│   │   ├── unique_id.py       ← Deterministic ID builder
-│   │   ├── validator.py       ← Input validation
-│   │   └── retry.py           ← Retry decorator with backoff
-│   └── errors/
-│       └── exceptions.py      ← Custom exception hierarchy
-├── tests/unit/                ← Unit tests (pytest)
+│   ├── utils/                 ← Utilities (checksum, validation, retry, etc)
+│   └── errors/                ← Custom exception hierarchy mapping
+├── .github/workflows/         ← CI/CD pipeline (flake8, mypy, docker tests)
+├── Dockerfile                 ← Production container image (Gunicorn/Uvicorn)
+├── docker-compose.yml         ← Simple local clustered deployment
+├── entrypoint.sh              ← Auto-seeder injection layer for production
 ├── requirements.txt
 └── .env.example
 ```
@@ -92,9 +98,7 @@ graph TB
 
     subgraph "MongoDB"
         META["metadata collection"]
-        CONF["configs collection"]
-        SQLG["sqlfiles GridFS bucket"]
-        TMPG["templates GridFS bucket"]
+        FSG["fs GridFS bucket (Unified Storage)"]
     end
 
     CLI --> SS & FS & ES & CS
@@ -104,8 +108,7 @@ graph TB
     CS --> GS & DB
     FS --> DB
     GS --> RT
-    DB --> META & CONF & SQLG & TMPG
-```
+    DB --> META & FSG
 
 ---
 
@@ -124,9 +127,9 @@ A **bundle** is a set of files that belong together:
 
 | File Type | Storage | Example |
 |-----------|---------|---------|
-| JSON Config | `configs` collection (as a document) | Report metadata, schedule |
-| SQL File | `sqlfiles` GridFS bucket (binary) | The query that generates data |
-| Template | `templates` GridFS bucket (binary) | Report formatting template |
+| JSON Config | `fs` GridFS bucket (binary) | Report metadata, schedule |
+| SQL File | `fs` GridFS bucket (binary) | The query that generates data |
+| Template | `fs` GridFS bucket (binary) | Report formatting template |
 
 Prepare a `seed.yaml` manifest:
 
@@ -174,10 +177,8 @@ flowchart TD
 
 | Storage | What | Why |
 |---|---|---|
-| `metadata` collection | Record metadata, version, checksums, file references, audit log | Fast queries, version tracking |
-| `configs` collection | JSON config content as embedded documents | JSON is small, no need for GridFS |
-| GridFS `sqlfiles` bucket | SQL files as binary blobs | Handles large files with chunking |
-| GridFS `templates` bucket | Template files as binary blobs | Same reason |
+| `metadata` collection | Record metadata, version, checksums, GridFS references, audit log | Fast queries, version tracking |
+| Unified GridFS `fs` bucket | JSON configs, SQL files, and Templates as binary blobs | Handles massive files (>16MB) natively with chunking |
 
 ```mermaid
 erDiagram
@@ -189,7 +190,7 @@ erDiagram
         string name
         string out_file_name
         object original_files
-        object file_references
+        object file_contents
         object checksums
         object file_sizes
         datetime uploaded_at
@@ -198,28 +199,15 @@ erDiagram
         array audit_log
     }
 
-    configs {
-        string unique_id
-        object config
-        datetime uploaded_at
-        int version
-    }
-
-    sqlfiles_gridfs {
+    fs_gridfs {
         binary data
         string filename
         object metadata
     }
 
-    templates_gridfs {
-        binary data
-        string filename
-        object metadata
-    }
-
-    metadata ||--|| configs : "json_config_id"
-    metadata ||--o| sqlfiles_gridfs : "sql_gridfs_id"
-    metadata ||--o| templates_gridfs : "template_gridfs_id"
+    metadata ||--|| fs_gridfs : "json_config_id"
+    metadata ||--o| fs_gridfs : "sql_file_id"
+    metadata ||--o| fs_gridfs : "template_id"
 ```
 
 ### 4. Append-Only Versioning
@@ -251,7 +239,7 @@ Reconstructs original files from MongoDB/GridFS back to disk.
 
 ```mermaid
 flowchart TD
-    A["Find record by unique_id"] --> B["Read JSON config from configs collection"]
+    A["Find record by unique_id"] --> B["Download JSON config from GridFS"]
     B --> C["Write config.json to disk"]
     C --> D["Download SQL from GridFS"]
     D --> E["Write .sql file to disk"]
@@ -288,11 +276,10 @@ python -m src.cli cleanup --all --keep 3 --dry-run
 > **Note:** Active records are **always protected** — they're never deleted regardless of `--keep` count. The `--dry-run` flag previews what would be deleted without actually deleting.
 
 For each purged version, the system deletes:
-- The metadata document
-- The config document from `configs` collection
-- The SQL file from GridFS
-- The template file from GridFS (if any)
-
+- The `metadata` document containing the relational schema
+- The JSON config file from the GridFS bucket
+- The SQL file from the GridFS bucket
+- The Template file from the GridFS bucket (if any)
 ---
 
 ## Safety Mechanisms
@@ -304,12 +291,12 @@ Every file gets a **SHA-256 checksum** computed at upload time and stored in the
 GridFS operations are wrapped with `@retry_on_failure`. On transient errors (`AutoReconnect`, `ConnectionFailure`, `NetworkTimeout`), the operation retries up to 3 times with exponential delays (0.5s → 1s → 2s, capped at 10s).
 
 ### Orphan Cleanup
-If a multi-step operation fails midway (e.g., SQL uploaded but metadata insert fails), the `GridFSOrphanTracker` cleans up all uploaded GridFS files **and** config documents:
+If a multi-step operation fails midway (e.g., SQL uploaded but metadata insert fails), the `GridFSOrphanTracker` cleans up all actively uploaded GridFS files:
 
 ```
-upload SQL ✅ → upload template ✅ → insert metadata ❌
+upload JSON ✅ → upload SQL ✅ → insert metadata ❌
                                           ↓
-                              tracker.cleanup() → deletes SQL, template & config doc
+                              tracker.cleanup() → deletes JSON & SQL blobs from GridFS securely
 ```
 
 ### Transaction Support
