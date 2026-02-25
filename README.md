@@ -6,26 +6,31 @@ A document bundle management system for regulatory documents. Stores versioned b
 
 ## Quick Start
 
-### 1. Production Deployment (Recommended)
-You can instantly deploy the entire REST API, MongoDB Database, and automated bundle seeder securely via Docker Compose:
+### Using Docker (Recommended for Production)
+
 ```bash
+# 1. Configure MongoDB connection and API key
 cp .env.example .env
-# Edit .env with your secrets if desired
+# Edit .env and ensure your variables are set
+
+# 2. Build and start via Docker Compose
 docker-compose up -d --build
 ```
 
-### 2. Manual Setup
+### Manual Installation (Development)
+
 ```bash
 # 1. Install dependencies
 pip install -r requirements.txt
 
 # 2. Configure MongoDB connection
 cp .env.example .env
+# Edit .env with your MongoDB URI
 
 # 3. Seed bundles from manifest
 python -m src.cli seed seeds/seed.yaml
 
-# 4. Or start the REST API locally
+# 4. Or start the REST API
 uvicorn src.api:app --reload --port 8000
 ```
 
@@ -62,12 +67,17 @@ API_KEY=              # leave empty to disable auth (dev mode)
 │   │   ├── cleanup_service.py ← Purge old versions
 │   │   ├── gridfs_service.py  ← GridFS file operations
 │   │   └── audit_service.py   ← Audit log entries
-│   ├── utils/                 ← Utilities (checksum, validation, retry, etc)
-│   └── errors/                ← Custom exception hierarchy mapping
-├── .github/workflows/         ← CI/CD pipeline (flake8, mypy, docker tests)
-├── Dockerfile                 ← Production container image (Gunicorn/Uvicorn)
-├── docker-compose.yml         ← Simple local clustered deployment
-├── entrypoint.sh              ← Auto-seeder injection layer for production
+│   ├── utils/
+│   │   ├── checksum.py        ← SHA-256 hashing
+│   │   ├── unique_id.py       ← Deterministic ID builder
+│   │   ├── validator.py       ← Input validation
+│   │   └── retry.py           ← Retry decorator with backoff
+│   └── errors/
+│       └── exceptions.py      ← Custom exception hierarchy
+├── docker-compose.yml         ← Docker Compose configuration
+├── Dockerfile                 ← Docker image configuration
+├── entrypoint.sh              ← Container startup script
+├── tests/unit/                ← Unit tests (pytest)
 ├── requirements.txt
 └── .env.example
 ```
@@ -98,7 +108,7 @@ graph TB
 
     subgraph "MongoDB"
         META["metadata collection"]
-        FSG["fs GridFS bucket (Unified Storage)"]
+        FS_GRID["GridFS bucket (fs)"]
     end
 
     CLI --> SS & FS & ES & CS
@@ -108,7 +118,8 @@ graph TB
     CS --> GS & DB
     FS --> DB
     GS --> RT
-    DB --> META & FSG
+    DB --> META & FS_GRID
+```
 
 ---
 
@@ -120,6 +131,7 @@ On startup, `DatabaseManager` connects to MongoDB, pings the server, and:
 
 - **Detects transaction support** — checks if MongoDB is a replica set or standalone. If standalone, operations proceed without transactions (with a warning).
 - **Creates indexes** — a partial unique index on `(unique_id)` where `active=true` ensures only one active record per bundle. Secondary indexes on `csi_id`, `region`, `regulation` for fast lookups.
+- **Initializes GridFS** — creates a single, unified GridFS bucket (`fs`) for all file assets.
 
 ### 2. Seeding Bundles
 
@@ -177,8 +189,8 @@ flowchart TD
 
 | Storage | What | Why |
 |---|---|---|
-| `metadata` collection | Record metadata, version, checksums, GridFS references, audit log | Fast queries, version tracking |
-| Unified GridFS `fs` bucket | JSON configs, SQL files, and Templates as binary blobs | Handles massive files (>16MB) natively with chunking |
+| `metadata` collection | Record metadata, version, checksums, file references, audit log | Fast queries, version tracking |
+| Single GridFS `fs` bucket | JSON configs, SQL files, and Templates as binary blobs | Unified storage for all bundle assets |
 
 ```mermaid
 erDiagram
@@ -199,22 +211,20 @@ erDiagram
         array audit_log
     }
 
-    fs_gridfs {
+    gridfs_fs {
         binary data
         string filename
         object metadata
     }
 
-    metadata ||--|| fs_gridfs : "json_config_id"
-    metadata ||--o| fs_gridfs : "sql_file_id"
-    metadata ||--o| fs_gridfs : "template_id"
+    metadata ||--o{ gridfs_fs : "References file_contents IDs"
 ```
 
 ### 4. Append-Only Versioning
 
 When a bundle is modified, the old version is **deactivated** (`active: false`) and a new version is **appended**. Old versions are never deleted automatically — use the `cleanup` command to purge them.
 
-If MongoDB supports transactions (replica set), the deactivation and new insert happen atomically. On standalone, operations run sequentially with orphan tracking.
+If MongoDB supports transactions (replica set), the deactivation and new insert happen atomically. On standalone, operations run sequentially with orphan tracking via `GridFSOrphanTracker`.
 
 ### 5. Querying Records
 
@@ -235,7 +245,7 @@ All multi-result queries have a default limit of 500 to prevent memory issues.
 python -m src.cli export --unique-id "mas-trm_..." --output ./export_dir
 ```
 
-Reconstructs original files from MongoDB/GridFS back to disk.
+Reconstructs original files from MongoDB GridFS back to disk.
 
 ```mermaid
 flowchart TD
@@ -276,10 +286,11 @@ python -m src.cli cleanup --all --keep 3 --dry-run
 > **Note:** Active records are **always protected** — they're never deleted regardless of `--keep` count. The `--dry-run` flag previews what would be deleted without actually deleting.
 
 For each purged version, the system deletes:
-- The `metadata` document containing the relational schema
-- The JSON config file from the GridFS bucket
-- The SQL file from the GridFS bucket
-- The Template file from the GridFS bucket (if any)
+- The metadata document
+- The JSON config file from GridFS
+- The SQL file from GridFS
+- The template file from GridFS (if any)
+
 ---
 
 ## Safety Mechanisms
@@ -291,12 +302,12 @@ Every file gets a **SHA-256 checksum** computed at upload time and stored in the
 GridFS operations are wrapped with `@retry_on_failure`. On transient errors (`AutoReconnect`, `ConnectionFailure`, `NetworkTimeout`), the operation retries up to 3 times with exponential delays (0.5s → 1s → 2s, capped at 10s).
 
 ### Orphan Cleanup
-If a multi-step operation fails midway (e.g., SQL uploaded but metadata insert fails), the `GridFSOrphanTracker` cleans up all actively uploaded GridFS files:
+If a multi-step operation fails midway (e.g., SQL uploaded but metadata insert fails), the `GridFSOrphanTracker` cleans up all uploaded GridFS files:
 
 ```
 upload JSON ✅ → upload SQL ✅ → insert metadata ❌
                                           ↓
-                              tracker.cleanup() → deletes JSON & SQL blobs from GridFS securely
+                              tracker.cleanup() → deletes JSON & SQL from GridFS
 ```
 
 ### Transaction Support
@@ -349,11 +360,12 @@ python -m src.cli -v seed seeds/seed.yaml
 
 ---
 
-## REST API
+## REST API (Production with Gunicorn)
 
 ```bash
-uvicorn src.api:app --reload --port 8000
+gunicorn src.api:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
+(Note: Using `docker-compose up` will spin this up automatically).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -365,5 +377,3 @@ uvicorn src.api:app --reload --port 8000
 | POST | `/api/cleanup` | Run retention cleanup (JSON body) |
 
 All endpoints except `/api/health` require `X-API-Key` header when `API_KEY` is set.
-
-
