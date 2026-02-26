@@ -21,6 +21,9 @@ class DatabaseManager:
         settings = get_settings()
         self._uri = uri or settings.mongo_uri
         self._db_name = db_name or settings.mongo_db_name
+        self._col_metadata = settings.mongo_metadata_collection
+        self._col_counters = settings.mongo_counters_collection
+        self._bucket_name = settings.mongo_gridfs_bucket
         self._client: MongoClient | None = None
         self._db = None
         self._fs: GridFS | None = None
@@ -39,8 +42,8 @@ class DatabaseManager:
             self._client.admin.command("ping")
             self._db = self._client[self._db_name]
 
-            # Initialize a single, unified GridFS bucket
-            self._fs = GridFS(self._db)
+            # Initialize GridFS with the configured bucket name
+            self._fs = GridFS(self._db, collection=self._bucket_name)
 
             self._detect_transaction_support()
             self._ensure_indexes()
@@ -51,8 +54,10 @@ class DatabaseManager:
             except Exception:
                 host_display = "unknown"
             logger.info(
-                "database.connected host=%s db=%s transactions=%s",
-                host_display, self._db_name, self._supports_transactions,
+                "database.connected host=%s db=%s metadata=%s counters=%s gridfs=%s transactions=%s",
+                host_display, self._db_name,
+                self._col_metadata, self._col_counters, self._bucket_name,
+                self._supports_transactions,
             )
         except (ConnectionFailure, ServerSelectionTimeoutError) as exc:
             logger.error("database.connection_failed error=%s", exc)
@@ -75,7 +80,8 @@ class DatabaseManager:
             logger.warning("database.transaction_detection_failed assuming standalone")
 
     def _ensure_indexes(self):
-        metadata = self._db["metadata"]
+        col_name = self._col_metadata
+        metadata = self._db[col_name]
 
         # Unique partial index: one active document per report_id
         try:
@@ -106,7 +112,7 @@ class DatabaseManager:
         metadata.create_index("region", name="idx_region")
         metadata.create_index("regulation", name="idx_regulation")
         metadata.create_index("active", name="idx_active")
-        logger.info("database.indexes_ensured collection=metadata")
+        logger.info("database.indexes_ensured collection=%s", col_name)
 
     @property
     def supports_transactions(self) -> bool:
@@ -126,7 +132,11 @@ class DatabaseManager:
 
     @property
     def metadata_collection(self):
-        return self.db["metadata"]
+        return self.db[self._col_metadata]
+
+    @property
+    def counters_collection(self):
+        return self.db[self._col_counters]
 
     @property
     def fs(self) -> GridFS:

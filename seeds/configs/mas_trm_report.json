@@ -1,0 +1,5 @@
+{
+  "name": "MAS TRM Report",
+  "outFileName": "mas_trm_report_{YYYYMMDD}.csv",
+  "description": "Monetary Authority of Singapore Technology Risk Management Report"
+}

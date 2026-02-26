@@ -4,7 +4,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-COUNTER_COLLECTION = "counters"
 COUNTER_ID = "report_id_seq"
 REPORT_ID_WIDTH = 7
 
@@ -14,15 +13,17 @@ def generate_report_id(db) -> str:
     Atomically increment the report_id sequence counter and return a
     zero-padded 7-digit string (e.g. '0000001').
 
-    Uses MongoDB's findOneAndUpdate with upsert=True so the counter
-    is created on first use and is safe under concurrent inserts.
+    Uses db.counters_collection (name configured via MONGO_COUNTERS_COLLECTION)
+    with findOneAndUpdate + upsert=True so the counter is created on first use
+    and is safe under concurrent inserts.
     """
-    result = db.db[COUNTER_COLLECTION].find_one_and_update(
+    result = db.counters_collection.find_one_and_update(
         {"_id": COUNTER_ID},
         {"$inc": {"seq": 1}},
         upsert=True,
         return_document=True,
     )
+
     seq: int = result["seq"]
 
     if seq > 10 ** REPORT_ID_WIDTH - 1:
