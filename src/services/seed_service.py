@@ -201,9 +201,17 @@ def _process_bundle(bundle: dict, config: dict) -> tuple[str, Optional[str], Opt
     """
     Determine whether to create/skip/modify a bundle.
     Returns (status, report_id, version, reason).
-    config is the pre-parsed JSON config dict (already validated).
+
+    Routing rules (no user-supplied report_id):
+      Composite key: (csi_id, region, regulation, original_files.json_config filename)
+      - Active record found with same key → MODIFY
+          • All checksums unchanged → SKIP (idempotent re-run)
+          • Any checksum changed    → MODIFY (includes json_config if its content changed)
+      - No active record found         → CREATE (UUID report_id assigned internally)
     """
     db = get_db()
+
+    json_config_filename = Path(bundle["json_config"]).name
 
     logger.debug("seed.checksum  Computing checksums for '%s'", bundle["csi_id"])
     json_checksum = compute_file_checksum(bundle["json_config"])
@@ -223,48 +231,30 @@ def _process_bundle(bundle: dict, config: dict) -> tuple[str, Optional[str], Opt
         "template": template_checksum,
     }
 
-    # ── Route: CREATE or MODIFY ──────────────────────────────────
-    #
-    # Rules:
-    #   - No report_id in bundle → always CREATE a new record.
-    #   - report_id supplied     → MODIFY that exact record (required for updates).
-    #     • Skips if all checksums match (idempotent re-run).
-    #     • report_id not found  → error (do not silently create).
-    #
-    supplied_report_id = bundle.get("report_id")
+    # ── Composite key lookup ─────────────────────────────────────
+    logger.debug(
+        "seed.lookup  csi_id=%s regulation=%s region=%s json_config=%s",
+        bundle["csi_id"], bundle["regulation"], bundle["region"], json_config_filename,
+    )
+    existing = db.metadata_collection.find_one({
+        "csi_id": bundle["csi_id"],
+        "regulation": bundle["regulation"],
+        "region": bundle["region"],
+        "original_files.json_config": json_config_filename,
+        "active": True,
+    })
 
-    if not supplied_report_id:
-        # ── CREATE ──────────────────────────────────────────────
+    if not existing:
+        # ── CREATE ───────────────────────────────────────────────
         logger.debug(
-            "seed.create  No report_id — creating new record for csi_id=%s regulation=%s region=%s",
+            "seed.create  No existing record — creating for csi_id=%s regulation=%s region=%s",
             bundle["csi_id"], bundle["regulation"], bundle["region"],
         )
         report_id = _create_record(bundle, config, precomputed_checksums=precomputed)
         return "created", report_id, 1, "new record"
 
-    # ── MODIFY (report_id mandatory) ────────────────────────────
-    logger.debug("seed.lookup  report_id=%s (supplied — targeting existing record)", supplied_report_id)
-    existing = db.metadata_collection.find_one(
-        {"report_id": supplied_report_id, "active": True}
-    )
-    if not existing:
-        raise RecordNotFoundError(
-            f"report_id '{supplied_report_id}' not found or no active record exists. "
-            "Omit 'report_id' entirely to create a new record."
-        )
-
-    # Safety: ensure the bundle's composite key matches the stored record
-    mismatch = [
-        f"{field}: YAML='{bundle.get(field)}' DB='{existing.get(field)}'"
-        for field in ("csi_id", "regulation", "region")
-        if existing.get(field) != bundle.get(field)
-    ]
-    if mismatch:
-        raise ValidationError(
-            f"report_id '{supplied_report_id}' found but fields don't match — "
-            f"{'; '.join(mismatch)}"
-        )
-
+    # ── Existing record found — check if anything changed ────────
+    internal_report_id = existing["report_id"]
     existing_checksums = existing.get("checksums", {})
     checksums_match = (
         existing_checksums.get("json_config") == json_checksum
@@ -272,18 +262,20 @@ def _process_bundle(bundle: dict, config: dict) -> tuple[str, Optional[str], Opt
         and existing_checksums.get("template") == template_checksum
     )
     if checksums_match:
-        logger.debug("seed.skip  report_id=%s — all checksums match, nothing to do", supplied_report_id)
-        return "skipped", supplied_report_id, existing.get("version"), "checksums unchanged"
+        logger.debug(
+            "seed.skip  report_id=%s — all checksums match, nothing to do", internal_report_id
+        )
+        return "skipped", internal_report_id, existing.get("version"), "checksums unchanged"
 
     logger.debug(
         "seed.modify  report_id=%s v%d — checksums changed",
-        supplied_report_id, existing.get("version", 1),
+        internal_report_id, existing.get("version", 1),
     )
     new_version = _modify_record(
-        supplied_report_id, bundle, config, existing,
+        internal_report_id, bundle, config, existing,
         precomputed_checksums=precomputed,
     )
-    return "updated", supplied_report_id, new_version, "checksums changed"
+    return "updated", internal_report_id, new_version, "checksums changed"
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +321,59 @@ def create_single_record(
 
 
 # ---------------------------------------------------------------------------
-# Public: modify by report_id
+# Public: modify by composite key (user-facing — no report_id needed)
+# ---------------------------------------------------------------------------
+
+def modify_record_by_composite_key(
+    csi_id: str,
+    region: str,
+    regulation: str,
+    json_config_path: str,
+    sql_file_path: Optional[str] = None,
+    template_path: Optional[str] = None,
+) -> int:
+    """
+    Modify an existing active record identified by composite key
+    (csi_id, region, regulation, json_config filename).
+
+    json_config_path is always required — its filename is the lookup key.
+    If its content has changed (different checksum), it will be updated too.
+    sql_file_path and template_path are optional additional files to update.
+
+    Returns the new version number.
+    """
+    json_config_filename = Path(json_config_path).name
+    logger.info(
+        "seed.modify_composite  csi_id=%s regulation=%s region=%s json_config=%s",
+        csi_id, regulation, region, json_config_filename,
+    )
+
+    db = get_db()
+    existing = db.metadata_collection.find_one({
+        "csi_id": csi_id,
+        "regulation": regulation,
+        "region": region,
+        "original_files.json_config": json_config_filename,
+        "active": True,
+    })
+    if not existing:
+        raise RecordNotFoundError(
+            f"No active record found for csi_id='{csi_id}' regulation='{regulation}' "
+            f"region='{region}' json_config='{json_config_filename}'"
+        )
+
+    report_id = existing["report_id"]
+    logger.info("seed.modify_composite  found report_id=%s v%d", report_id, existing.get("version", 1))
+    return modify_record_by_id(
+        report_id=report_id,
+        json_config_path=json_config_path,
+        sql_file_path=sql_file_path,
+        template_path=template_path,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public: modify by internal report_id (API use — UUID)
 # ---------------------------------------------------------------------------
 
 def modify_record_by_id(

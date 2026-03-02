@@ -273,7 +273,6 @@ class SeedBundleRequest(BaseModel):
     sql_file_content: str              # base64-encoded file bytes
     template_filename: Optional[str] = None
     template_content: Optional[str] = None  # base64-encoded, only if template_filename set
-    report_id: Optional[str] = None     # set to force-modify a specific record
 
 
 class SeedManifestRequest(BaseModel):
@@ -331,7 +330,6 @@ async def seed_bundle(req: SeedBundleRequest):
                 "json_config": str(json_path),
                 "sql_file": str(sql_path),
                 "template": str(tmpl_path) if tmpl_path else None,
-                "report_id": req.report_id,
             }
 
             status, report_id, version, reason = _pb(bundle, config)
@@ -394,7 +392,6 @@ async def seed_manifest(req: SeedManifestRequest):
                     "csi_id": b.csi_id, "region": b.region, "regulation": b.regulation,
                     "json_config": str(json_path), "sql_file": str(sql_path),
                     "template": str(tmpl_path) if tmpl_path else None,
-                    "report_id": b.report_id,
                 }
 
                 status, report_id, version, reason = _pb(bundle, config)

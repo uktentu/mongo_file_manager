@@ -1,37 +1,18 @@
-"""Atomic 7-digit report_id generator — counter stored in the metadata collection."""
+"""Internal report_id generator — UUID-based, zero coordination required."""
 
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
-COUNTER_ID = "report_id_seq"
-REPORT_ID_WIDTH = 7
 
-
-def generate_report_id(db) -> str:
+def generate_report_id(_db=None) -> str:
     """
-    Atomically increment the report_id sequence counter and return a
-    zero-padded 7-digit string (e.g. '0000001').
+    Generate a unique internal report_id using UUID4.
 
-    The counter is stored as a sentinel document {_id: 'report_id_seq'}
-    directly inside the metadata collection — no separate counters
-    collection is needed.
+    No counter collection, no sentinel document, no sequence coordination
+    needed. The `_db` argument is accepted for API compatibility but unused.
     """
-    result = db.metadata_collection.find_one_and_update(
-        {"_id": COUNTER_ID},
-        {"$inc": {"seq": 1}},
-        upsert=True,
-        return_document=True,
-    )
-
-    seq: int = result["seq"]
-
-    if seq > 10 ** REPORT_ID_WIDTH - 1:
-        raise OverflowError(
-            f"report_id counter has exceeded the maximum 7-digit value ({seq}). "
-            "Expand REPORT_ID_WIDTH or implement a rollover strategy."
-        )
-
-    report_id = str(seq).zfill(REPORT_ID_WIDTH)
-    logger.debug("report_id.generated report_id=%s seq=%d", report_id, seq)
+    report_id = str(uuid.uuid4())
+    logger.debug("report_id.generated report_id=%s", report_id)
     return report_id

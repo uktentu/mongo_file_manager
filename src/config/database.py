@@ -102,11 +102,44 @@ class DatabaseManager:
             [("report_id", ASCENDING), ("version", ASCENDING)],
             name="idx_report_id_version",
         )
-        # Composite key index for deduplication during seeding
+        # Composite key + json_config filename: drives CREATE vs MODIFY routing
+        # Drop old index first if it exists with a different key pattern (migration)
+        try:
+            existing_indexes = {idx["name"]: idx for idx in metadata.list_indexes()}
+            if "idx_composite_dedup" in existing_indexes:
+                old_keys = list(existing_indexes["idx_composite_dedup"]["key"].keys())
+                if "original_files.json_config" not in old_keys:
+                    metadata.drop_index("idx_composite_dedup")
+                    logger.info("database.index_dropped name=idx_composite_dedup (schema migration)")
+        except Exception as exc:
+            logger.warning("database.index_migration_check_failed error=%s", exc)
+
         metadata.create_index(
-            [("csi_id", ASCENDING), ("regulation", ASCENDING), ("region", ASCENDING), ("active", ASCENDING)],
+            [
+                ("csi_id", ASCENDING),
+                ("regulation", ASCENDING),
+                ("region", ASCENDING),
+                ("original_files.json_config", ASCENDING),
+                ("active", ASCENDING),
+            ],
             name="idx_composite_dedup",
         )
+        # Partial unique index: only one active record per composite key
+        try:
+            metadata.create_index(
+                [
+                    ("csi_id", ASCENDING),
+                    ("regulation", ASCENDING),
+                    ("region", ASCENDING),
+                    ("original_files.json_config", ASCENDING),
+                ],
+                name="idx_composite_active_unique",
+                unique=True,
+                partialFilterExpression={"active": True},
+            )
+        except OperationFailure as exc:
+            if "already exists" not in str(exc).lower():
+                logger.warning("database.composite_unique_index_failed error=%s", exc)
         metadata.create_index("csi_id", name="idx_csi_id")
         metadata.create_index("region", name="idx_region")
         metadata.create_index("regulation", name="idx_regulation")

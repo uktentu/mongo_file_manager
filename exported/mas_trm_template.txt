@@ -1,0 +1,6 @@
+Report for {regulation} in {region}
+CSI ID: {csi_id}
+Generated on: {timestamp}
+
+## Results
+{results_table}

@@ -121,26 +121,32 @@ def create(csi_id, region, regulation, json_config, sql_file, template):
 
 
 @cli.command()
-@click.option("--report-id", "report_id", required=True, help="7-digit Report ID of the record to modify.")
-@click.option("--config", "json_config", type=click.Path(exists=True), default=None, help="New JSON config.")
+@click.option("--csi-id", required=True, help="CSI ID of the record to modify.")
+@click.option("--region", required=True, help="Region code.")
+@click.option("--regulation", required=True, help="Regulation code.")
+@click.option("--config", "json_config", required=True, type=click.Path(exists=True), help="JSON config (always required — filename is the lookup key; content updated if changed).")
 @click.option("--sql", "sql_file", type=click.Path(exists=True), default=None, help="New SQL file.")
 @click.option("--template", type=click.Path(exists=True), default=None, help="New template file.")
-def modify(report_id, json_config, sql_file, template):
-    """Modify an existing active record (append-only versioning)."""
-    from src.services.seed_service import modify_record_by_id
+def modify(csi_id, region, regulation, json_config, sql_file, template):
+    """Modify an existing active record identified by composite key.
+
+    --config is always required: its filename identifies the record.
+    If the config content has changed it will be updated too.
+    """
+    from src.services.seed_service import modify_record_by_composite_key
 
     try:
         db = get_db()
-        if not any([json_config, sql_file, template]):
-            console.print("[bold red]Error:[/] At least one file must be provided.", style="red")
-            sys.exit(1)
-
-        new_version = modify_record_by_id(
-            report_id=report_id, json_config_path=json_config,
-            sql_file_path=sql_file, template_path=template,
+        new_version = modify_record_by_composite_key(
+            csi_id=csi_id, region=region, regulation=regulation,
+            json_config_path=json_config,
+            sql_file_path=sql_file,
+            template_path=template,
         )
         console.print(Panel(
-            f"[bold green]Record modified![/]\n\n[bold]Report ID:[/] {report_id}\n[bold]New Version:[/] {new_version}",
+            f"[bold green]Record modified![/]\n\n"
+            f"[bold]CSI ID:[/] {csi_id}  [bold]Region:[/] {region}  [bold]Regulation:[/] {regulation}\n"
+            f"[bold]New Version:[/] {new_version}",
             title="🔄 Modified", border_style="yellow",
         ))
         db.close()

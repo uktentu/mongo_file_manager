@@ -1,29 +1,27 @@
 bundles:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Rules:
-  #   • No report_id supplied → always CREATE a new record.
-  #     A 7-digit report_id is printed after creation — save it.
+  #   • No report_id needed — ever.
   #
-  #   • report_id supplied → MODIFY that exact record (mandatory for updates).
-  #     - Skips silently if all file checksums are unchanged.
-  #     - Fails if the report_id does not exist or fields don't match.
+  #   • CREATE vs MODIFY is automatic:
+  #     The system looks up the record by composite key:
+  #       (csi_id + region + regulation + json_config filename)
+  #
+  #     - No active record found → CREATE (internal UUID assigned).
+  #     - Active record found    → compare all checksums:
+  #         All unchanged → SKIP  (idempotent re-run, nothing written)
+  #         Any changed   → MODIFY (new version, files re-uploaded)
+  #
+  #   • json_config is always required:
+  #     Its filename is the lookup key AND its content is checksum-checked.
+  #     If the content changed, it is updated as part of the modification.
   #
   # All file paths are relative to this file's directory.
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  # ── CREATE (first run — no report_id) ────────────────────────────
   - csi_id: "CSI-001"
     region: "APAC"
     regulation: "MAS-TRM"
     json_config: "configs/mas_trm_report.json"
     sql_file: "sql/mas_trm_query.sql"
     template: "templates/mas_trm_template.txt"   # optional
-
-  # ── MODIFY (subsequent runs — report_id required) ─────────────────
-  # - csi_id: "CSI-001"
-  #   region: "APAC"
-  #   regulation: "MAS-TRM"
-  #   json_config: "configs/mas_trm_report_v2.json"
-  #   sql_file: "sql/mas_trm_query.sql"
-  #   report_id: "0000001"   # ← from the CREATE output; mandatory to update
-

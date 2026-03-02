@@ -96,26 +96,8 @@ def validate_seed_bundle(bundle: Any, base_dir: Path, index: int = 0) -> dict:
     _validate_token_field(bundle["region"], "region", index)
     _validate_token_field(bundle["regulation"], "regulation", index)
 
-    # --- Optional report_id ---
-    # Absent  → CREATE intent (service layer will generate one)
-    # Present → MODIFY intent (service layer enforces the record must exist)
-    # Must be a quoted 7-digit string in YAML: report_id: "0000001"
-    report_id = bundle.get("report_id")
-    if report_id is not None:
-        if not isinstance(report_id, str):
-            raise ValidationError(
-                f"Bundle #{index}: 'report_id' must be a quoted 7-digit string "
-                f"(e.g. report_id: \"0000001\"), got {type(report_id).__name__} '{report_id}'. "
-                "Add quotes around the value in your seed.yaml."
-            )
-        if not _REPORT_ID_RE.match(report_id):
-            raise ValidationError(
-                f"Bundle #{index}: 'report_id' must be exactly 7 digits (e.g. '0000001'), got '{report_id}'"
-            )
-
     # --- Resolve and validate file paths ---
     resolved = dict(bundle)
-    resolved["report_id"] = report_id  # None = CREATE, 7-digit str = MODIFY target
 
     resolved["json_config"] = str(
         validate_file_exists(base_dir / bundle["json_config"], "JSON config", index=index)
