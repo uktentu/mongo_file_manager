@@ -38,7 +38,7 @@ class FileSizes(BaseModel):
 
 
 class MetadataDocument(BaseModel):
-    unique_id: str
+    report_id: str
     csi_id: str
     region: str
     regulation: str

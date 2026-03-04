@@ -1,6 +1,5 @@
 """MongoDB connection management — single metadata collection."""
 
-import os
 import logging
 from pymongo import MongoClient, ASCENDING
 from pymongo.errors import (
@@ -9,11 +8,9 @@ from pymongo.errors import (
     ServerSelectionTimeoutError,
 )
 from gridfs import GridFS
-from dotenv import load_dotenv
 
+from src.config.settings import get_settings
 from src.errors.exceptions import DatabaseError
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -21,20 +18,22 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
 
     def __init__(self, uri: str | None = None, db_name: str | None = None):
-        self._uri = uri or os.getenv("MONGO_URI", "mongodb://localhost:27017")
-        self._db_name = db_name or os.getenv("MONGO_DB_NAME", "doc_management")
+        settings = get_settings()
+        self._uri = uri or settings.mongo_uri
+        self._db_name = db_name or settings.mongo_db_name
         self._client: MongoClient | None = None
         self._db = None
         self._fs: GridFS | None = None
         self._supports_transactions: bool = False
 
     def connect(self):
+        settings = get_settings()
         try:
             self._client = MongoClient(
                 self._uri,
-                maxPoolSize=50,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
+                maxPoolSize=settings.mongo_max_pool_size,
+                serverSelectionTimeoutMS=settings.mongo_server_timeout_ms,
+                connectTimeoutMS=settings.mongo_connect_timeout_ms,
                 retryWrites=True,
             )
             self._client.admin.command("ping")
@@ -46,15 +45,18 @@ class DatabaseManager:
             self._detect_transaction_support()
             self._ensure_indexes()
 
+            # Log host only — never log the full URI (may contain credentials)
+            try:
+                host_display = self._client.address or self._uri.split("@")[-1].split("/")[0]
+            except Exception:
+                host_display = "unknown"
             logger.info(
-                "database.connected uri=%s db=%s transactions=%s",
-                self._uri,
-                self._db_name,
-                self._supports_transactions,
+                "database.connected host=%s db=%s transactions=%s",
+                host_display, self._db_name, self._supports_transactions,
             )
         except (ConnectionFailure, ServerSelectionTimeoutError) as exc:
-            logger.error("database.connection_failed uri=%s error=%s", self._uri, exc)
-            raise DatabaseError(f"Failed to connect to MongoDB at {self._uri}: {exc}") from exc
+            logger.error("database.connection_failed error=%s", exc)
+            raise DatabaseError(f"Failed to connect to MongoDB: {exc}") from exc
 
     def _detect_transaction_support(self):
         try:
@@ -75,10 +77,11 @@ class DatabaseManager:
     def _ensure_indexes(self):
         metadata = self._db["metadata"]
 
+        # Unique partial index: one active document per report_id
         try:
             metadata.create_index(
-                [("unique_id", ASCENDING)],
-                name="idx_unique_id_active_unique",
+                [("report_id", ASCENDING)],
+                name="idx_report_id_active_unique",
                 unique=True,
                 partialFilterExpression={"active": True},
             )
@@ -87,17 +90,22 @@ class DatabaseManager:
                 logger.warning("database.partial_index_failed error=%s", exc)
 
         metadata.create_index(
-            [("unique_id", ASCENDING), ("active", ASCENDING)],
-            name="idx_unique_id_active",
+            [("report_id", ASCENDING), ("active", ASCENDING)],
+            name="idx_report_id_active",
+        )
+        metadata.create_index(
+            [("report_id", ASCENDING), ("version", ASCENDING)],
+            name="idx_report_id_version",
+        )
+        # Composite key index for deduplication during seeding
+        metadata.create_index(
+            [("csi_id", ASCENDING), ("regulation", ASCENDING), ("region", ASCENDING), ("active", ASCENDING)],
+            name="idx_composite_dedup",
         )
         metadata.create_index("csi_id", name="idx_csi_id")
         metadata.create_index("region", name="idx_region")
         metadata.create_index("regulation", name="idx_regulation")
         metadata.create_index("active", name="idx_active")
-        metadata.create_index(
-            [("unique_id", ASCENDING), ("version", ASCENDING)],
-            name="idx_unique_id_version",
-        )
         logger.info("database.indexes_ensured collection=metadata")
 
     @property

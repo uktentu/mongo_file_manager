@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def export_bundle(
-    unique_id: str,
+    report_id: str,
     output_dir: str | Path,
     version: Optional[int] = None,
     verify_checksums: bool = True,
@@ -26,16 +26,16 @@ def export_bundle(
     out_path.mkdir(parents=True, exist_ok=True)
 
     if version is not None:
-        record = db.metadata_collection.find_one({"unique_id": unique_id, "version": version})
+        record = db.metadata_collection.find_one({"report_id": report_id, "version": version})
         if not record:
-            raise RecordNotFoundError(f"No record found with unique_id '{unique_id}', version {version}")
+            raise RecordNotFoundError(f"No record found with report_id '{report_id}', version {version}")
     else:
-        record = db.metadata_collection.find_one({"unique_id": unique_id, "active": True})
+        record = db.metadata_collection.find_one({"report_id": report_id, "active": True})
         if not record:
-            raise RecordNotFoundError(f"No active record found with unique_id '{unique_id}'")
+            raise RecordNotFoundError(f"No active record found with report_id '{report_id}'")
 
     result = {
-        "unique_id": unique_id,
+        "report_id": report_id,
         "version": record.get("version", 1),
         "files": {},
         "checksum_verified": {},
@@ -65,10 +65,10 @@ def export_bundle(
                 if not matched:
                     mismatches.append(("json_config", json_path, expected, actual))
         except Exception as exc:
-            logger.error("export.json_config_failed unique_id=%s error=%s", unique_id, exc)
+            logger.error("export.json_config_failed report_id=%s error=%s", report_id, exc)
             result["files"]["json_config"] = f"ERROR: {exc}"
     else:
-        logger.warning("export.json_config_missing unique_id=%s", unique_id)
+        logger.warning("export.json_config_missing report_id=%s", report_id)
 
     # --- sql_file ---
     sql_id_str = contents.get("sql_file_id")
@@ -88,7 +88,7 @@ def export_bundle(
                 if not matched:
                     mismatches.append(("sql_file", sql_path, expected, actual))
         except Exception as exc:
-            logger.error("export.sql_failed unique_id=%s error=%s", unique_id, exc)
+            logger.error("export.sql_failed report_id=%s error=%s", report_id, exc)
             result["files"]["sql_file"] = f"ERROR: {exc}"
 
     # --- template ---
@@ -109,7 +109,7 @@ def export_bundle(
                 if not matched:
                     mismatches.append(("template", template_path, expected, actual))
         except Exception as exc:
-            logger.error("export.template_failed unique_id=%s error=%s", unique_id, exc)
+            logger.error("export.template_failed report_id=%s error=%s", report_id, exc)
             result["files"]["template"] = f"ERROR: {exc}"
 
     if mismatches and not force:
@@ -139,7 +139,7 @@ def export_bundle(
     total_checks = len(result["checksum_verified"])
 
     logger.info(
-        "export.complete unique_id=%s version=%d output=%s files=%d checksums=%d/%d",
-        unique_id, result["version"], out_path, exported_count, verified_count, total_checks,
+        "export.complete report_id=%s version=%d output=%s files=%d checksums=%d/%d",
+        report_id, result["version"], out_path, exported_count, verified_count, total_checks,
     )
     return result

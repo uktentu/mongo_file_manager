@@ -1,4 +1,17 @@
-"""Seed service — bulk seeding, single creation, and append-only modification."""
+"""
+Seed service — bulk seeding, single creation, and append-only modification.
+
+Flow for seed_from_manifest:
+  Step 1: Load & validate manifest structure
+  Step 2: Pre-validate ALL bundles (collect errors before touching DB)
+  Step 3: For each valid bundle:
+    a. Compute checksums
+    b. Resolve existing record (by report_id if supplied, else by composite key)
+    c. CREATE new record  — if no existing active record
+    d. SKIP              — if all checksums match
+    e. MODIFY            — if checksums changed
+  Step 4: Return structured result with per-bundle details + summary
+"""
 
 import logging
 import mimetypes
@@ -26,8 +39,12 @@ from src.models.schemas import (
 from src.services.audit_service import create_audit_entry
 from src.services.gridfs_service import GridFSOrphanTracker, upload_to_gridfs
 from src.utils.checksum import compute_file_checksum
-from src.utils.unique_id import build_unique_id
-from src.utils.validator import validate_json_config, validate_seed_bundle
+from src.utils.report_id import generate_report_id
+from src.utils.validator import (
+    validate_json_config,
+    validate_manifest_structure,
+    validate_seed_bundle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,85 +54,241 @@ def _detect_content_type(file_path: str) -> str:
     return mime_type or "application/octet-stream"
 
 
+# ---------------------------------------------------------------------------
+# Public: bulk seeding from manifest
+# ---------------------------------------------------------------------------
+
 def seed_from_manifest(manifest_path: str | Path) -> dict[str, Any]:
+    """
+    Load a YAML manifest and seed all bundles.
+
+    Returned dict:
+    {
+      "created": int, "updated": int, "skipped": int, "failed": int,
+      "total": int,
+      "details": [
+        {
+          "index": int, "label": str, "status": str,
+          "report_id": str | None, "version": int | None,
+          "reason": str, "error": str | None
+        }, ...
+      ],
+      "errors": [str, ...]          # compact error list for quick display
+    }
+    """
     path = Path(manifest_path)
+    logger.info("═" * 60)
+    logger.info("seed.start  manifest=%s", path)
+
+    # ── Step 1: Load YAML ────────────────────────────────────────
     if not path.exists():
         raise ValidationError(f"Manifest file not found: {path}")
 
-    with open(path, "r", encoding="utf-8") as f:
-        manifest = yaml.safe_load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        raise ValidationError(f"Failed to parse YAML manifest: {exc}") from exc
 
-    if not manifest or "bundles" not in manifest:
-        raise ValidationError("Invalid manifest: must contain a 'bundles' key with a list of entries.")
-
-    bundles = manifest["bundles"]
-    if not isinstance(bundles, list) or len(bundles) == 0:
-        raise ValidationError("Manifest 'bundles' must be a non-empty list.")
+    # ── Step 2: Validate manifest structure ──────────────────────
+    logger.info("seed.step1  Validating manifest structure")
+    raw_bundles = validate_manifest_structure(raw, source=str(path))
+    logger.info("seed.step1  OK — %d bundle(s) found", len(raw_bundles))
 
     base_dir = path.parent
-    results: dict[str, Any] = {"created": 0, "skipped": 0, "updated": 0, "failed": 0, "errors": []}
 
-    logger.info("seed.manifest_loaded path=%s bundles=%d", path, len(bundles))
+    # ── Step 3: Pre-validate ALL bundle fields & files ───────────
+    logger.info("seed.step2  Pre-validating all bundles before database operations")
+    validated_bundles: list[tuple[int, dict, dict]] = []   # (original_index, resolved, config)
+    pre_errors: list[str] = []
 
-    for i, bundle in enumerate(bundles):
-        bundle_label = bundle.get("csi_id", f"bundle-{i}")
+    for i, raw_bundle in enumerate(raw_bundles):
+        label = raw_bundle.get("csi_id", f"bundle-{i}") if isinstance(raw_bundle, dict) else f"bundle-{i}"
         try:
-            validated = validate_seed_bundle(bundle, base_dir)
-            result = _seed_single_bundle(validated)
-            results[result] += 1
-            logger.info("seed.bundle_processed index=%d/%d label=%s result=%s", i + 1, len(bundles), bundle_label, result)
+            resolved = validate_seed_bundle(raw_bundle, base_dir, index=i)
+            # Parse JSON config once — result is passed downstream to avoid re-reading
+            parsed_config = validate_json_config(resolved["json_config"], index=i)
+            validated_bundles.append((i, resolved, parsed_config))
+            logger.info(
+                "seed.step2  [%d/%d] %s — fields/files OK",
+                i + 1, len(raw_bundles), label,
+            )
         except Exception as exc:
-            results["failed"] += 1
-            error_msg = f"Bundle '{bundle_label}': {exc}"
-            results["errors"].append(error_msg)
-            logger.error("seed.bundle_failed index=%d/%d label=%s error=%s", i + 1, len(bundles), bundle_label, exc)
+            msg = f"Bundle #{i} '{label}': {exc}"
+            pre_errors.append(msg)
+            logger.error("seed.step2  [%d/%d] %s — VALIDATION FAILED: %s", i + 1, len(raw_bundles), label, exc)
 
+    if pre_errors:
+        logger.warning(
+            "seed.step2  %d/%d bundle(s) failed pre-validation — they will be skipped",
+            len(pre_errors), len(raw_bundles),
+        )
+
+    # ── Step 4: Process each validated bundle against DB ─────────
+    logger.info("seed.step3  Processing %d validated bundle(s)", len(validated_bundles))
+
+    results: dict[str, Any] = {
+        "created": 0, "updated": 0, "skipped": 0, "failed": 0,
+        "total": len(raw_bundles),
+        "details": [],
+        "errors": list(pre_errors),
+    }
+
+    # Mark pre-validation failures in details
+    for i, raw_bundle in enumerate(raw_bundles):
+        if not any(idx == i for idx, _, _ in validated_bundles):
+            label = raw_bundle.get("csi_id", f"bundle-{i}") if isinstance(raw_bundle, dict) else f"bundle-{i}"
+            matching_err = next((e for e in pre_errors if f"Bundle #{i}" in e), "Pre-validation failed")
+            results["details"].append({
+                "index": i, "label": label, "status": "failed",
+                "report_id": None, "version": None,
+                "reason": "Pre-validation failed",
+                "error": matching_err,
+            })
+            results["failed"] += 1
+
+    for idx, (i, bundle, config) in enumerate(validated_bundles):
+        label = bundle.get("csi_id", f"bundle-{i}")
+        logger.info("seed.step3  ── Bundle [%d/%d] '%s' ──", idx + 1, len(validated_bundles), label)
+
+        detail: dict[str, Any] = {
+            "index": i, "label": label, "status": "failed",
+            "report_id": None, "version": None,
+            "reason": "", "error": None,
+        }
+
+        try:
+            status, report_id, version, reason = _process_bundle(bundle, config)
+            detail["status"] = status
+            detail["report_id"] = report_id
+            detail["version"] = version
+            detail["reason"] = reason
+            results[status] += 1
+            logger.info(
+                "seed.step3  '%s' → %s  report_id=%s version=%s reason=%s",
+                label, status.upper(), report_id, version, reason,
+            )
+        except Exception as exc:
+            detail["status"] = "failed"
+            detail["error"] = str(exc)
+            detail["reason"] = "Database/processing error"
+            results["failed"] += 1
+            results["errors"].append(f"Bundle '{label}': {exc}")
+            logger.error("seed.step3  '%s' → FAILED: %s", label, exc)
+
+        results["details"].append(detail)
+
+    # ── Step 5: Final summary ─────────────────────────────────────
+    logger.info("═" * 60)
     logger.info(
-        "seed.manifest_complete created=%d updated=%d skipped=%d failed=%d",
-        results["created"], results["updated"], results["skipped"], results["failed"],
+        "seed.done   total=%d  created=%d  updated=%d  skipped=%d  failed=%d",
+        results["total"], results["created"], results["updated"],
+        results["skipped"], results["failed"],
     )
+    if results["errors"]:
+        for err in results["errors"]:
+            logger.error("seed.error  %s", err)
+    logger.info("═" * 60)
+
     return results
 
 
-def _seed_single_bundle(bundle: dict) -> str:
+# ---------------------------------------------------------------------------
+# Internal: single bundle dispatcher
+# ---------------------------------------------------------------------------
+
+def _process_bundle(bundle: dict, config: dict) -> tuple[str, Optional[str], Optional[int], str]:
+    """
+    Determine whether to create/skip/modify a bundle.
+    Returns (status, report_id, version, reason).
+    config is the pre-parsed JSON config dict (already validated).
+    """
     db = get_db()
 
-    config = validate_json_config(bundle["json_config"])
-    name = config["name"]
-    out_file_name = config["outFileName"]
-
-    unique_id = build_unique_id(
-        regulation=bundle["regulation"],
-        name=name,
-        out_file_name=out_file_name,
-        region=bundle["region"],
-    )
-
+    logger.debug("seed.checksum  Computing checksums for '%s'", bundle["csi_id"])
     json_checksum = compute_file_checksum(bundle["json_config"])
     sql_checksum = compute_file_checksum(bundle["sql_file"])
     template_checksum = (
         compute_file_checksum(bundle["template"]) if bundle.get("template") else None
     )
+    logger.debug(
+        "seed.checksum  json=%s sql=%s template=%s",
+        json_checksum[:12] + "…", sql_checksum[:12] + "…",
+        (template_checksum[:12] + "…") if template_checksum else "N/A",
+    )
 
-    existing = db.metadata_collection.find_one({"unique_id": unique_id, "active": True})
+    precomputed = {
+        "json_config": json_checksum,
+        "sql_file": sql_checksum,
+        "template": template_checksum,
+    }
 
-    if existing:
-        existing_checksums = existing.get("checksums", {})
-        if (
-            existing_checksums.get("json_config") == json_checksum
-            and existing_checksums.get("sql_file") == sql_checksum
-            and existing_checksums.get("template") == template_checksum
-        ):
-            logger.debug("seed.skipped unique_id=%s reason=checksums_match", unique_id)
-            return "skipped"
+    # ── Route: CREATE or MODIFY ──────────────────────────────────
+    #
+    # Rules:
+    #   - No report_id in bundle → always CREATE a new record.
+    #   - report_id supplied     → MODIFY that exact record (required for updates).
+    #     • Skips if all checksums match (idempotent re-run).
+    #     • report_id not found  → error (do not silently create).
+    #
+    supplied_report_id = bundle.get("report_id")
 
-        logger.info("seed.modifying unique_id=%s reason=checksums_changed", unique_id)
-        precomputed = {"json_config": json_checksum, "sql_file": sql_checksum, "template": template_checksum}
-        return _modify_record(unique_id, bundle, config, existing, precomputed_checksums=precomputed)
+    if not supplied_report_id:
+        # ── CREATE ──────────────────────────────────────────────
+        logger.debug(
+            "seed.create  No report_id — creating new record for csi_id=%s regulation=%s region=%s",
+            bundle["csi_id"], bundle["regulation"], bundle["region"],
+        )
+        report_id = _create_record(bundle, config, precomputed_checksums=precomputed)
+        return "created", report_id, 1, "new record"
 
-    precomputed = {"json_config": json_checksum, "sql_file": sql_checksum, "template": template_checksum}
-    return _create_record(unique_id, bundle, config, precomputed_checksums=precomputed)
+    # ── MODIFY (report_id mandatory) ────────────────────────────
+    logger.debug("seed.lookup  report_id=%s (supplied — targeting existing record)", supplied_report_id)
+    existing = db.metadata_collection.find_one(
+        {"report_id": supplied_report_id, "active": True}
+    )
+    if not existing:
+        raise RecordNotFoundError(
+            f"report_id '{supplied_report_id}' not found or no active record exists. "
+            "Omit 'report_id' entirely to create a new record."
+        )
 
+    # Safety: ensure the bundle's composite key matches the stored record
+    mismatch = [
+        f"{field}: YAML='{bundle.get(field)}' DB='{existing.get(field)}'"
+        for field in ("csi_id", "regulation", "region")
+        if existing.get(field) != bundle.get(field)
+    ]
+    if mismatch:
+        raise ValidationError(
+            f"report_id '{supplied_report_id}' found but fields don't match — "
+            f"{'; '.join(mismatch)}"
+        )
+
+    existing_checksums = existing.get("checksums", {})
+    checksums_match = (
+        existing_checksums.get("json_config") == json_checksum
+        and existing_checksums.get("sql_file") == sql_checksum
+        and existing_checksums.get("template") == template_checksum
+    )
+    if checksums_match:
+        logger.debug("seed.skip  report_id=%s — all checksums match, nothing to do", supplied_report_id)
+        return "skipped", supplied_report_id, existing.get("version"), "checksums unchanged"
+
+    logger.debug(
+        "seed.modify  report_id=%s v%d — checksums changed",
+        supplied_report_id, existing.get("version", 1),
+    )
+    new_version = _modify_record(
+        supplied_report_id, bundle, config, existing,
+        precomputed_checksums=precomputed,
+    )
+    return "updated", supplied_report_id, new_version, "checksums changed"
+
+
+# ---------------------------------------------------------------------------
+# Public: single create
+# ---------------------------------------------------------------------------
 
 def create_single_record(
     csi_id: str,
@@ -125,267 +298,78 @@ def create_single_record(
     sql_file_path: str,
     template_path: Optional[str] = None,
 ) -> str:
-    config = validate_json_config(json_config_path)
-    name = config["name"]
-    out_file_name = config["outFileName"]
+    """Create one record manually. Returns the generated report_id."""
+    logger.info("seed.create_single  csi_id=%s regulation=%s region=%s", csi_id, regulation, region)
 
-    unique_id = build_unique_id(
-        regulation=regulation, name=name, out_file_name=out_file_name, region=region
-    )
+    # Validate files
+    config = validate_json_config(json_config_path)
 
     db = get_db()
-    existing = db.metadata_collection.find_one({"unique_id": unique_id, "active": True})
+    existing = db.metadata_collection.find_one({
+        "csi_id": csi_id,
+        "regulation": regulation,
+        "region": region,
+        "active": True,
+    })
     if existing:
         raise DuplicateRecordError(
-            f"An active record already exists with unique_id '{unique_id}'. Use 'modify' command to update it."
+            f"An active record already exists for csi_id='{csi_id}' regulation='{regulation}' "
+            f"region='{region}' (report_id={existing.get('report_id')}). "
+            "Use 'modify' to update it."
         )
 
     bundle = {
-        "csi_id": csi_id,
-        "region": region,
-        "regulation": regulation,
-        "json_config": json_config_path,
-        "sql_file": sql_file_path,
+        "csi_id": csi_id, "region": region, "regulation": regulation,
+        "json_config": json_config_path, "sql_file": sql_file_path,
         "template": template_path,
     }
-
-    _create_record(unique_id, bundle, config)
-    return unique_id
-
-
-def _create_record(unique_id: str, bundle: dict, config: dict, precomputed_checksums: dict | None = None) -> str:
-    db = get_db()
-    tracker = GridFSOrphanTracker()
-
-    json_config_path = Path(bundle["json_config"])
-    sql_file_path = Path(bundle["sql_file"])
-    template_path = Path(bundle["template"]) if bundle.get("template") else None
-
-    checksums = precomputed_checksums or {}
-    json_checksum = checksums.get("json_config") or compute_file_checksum(json_config_path)
-    sql_checksum = checksums.get("sql_file") or compute_file_checksum(sql_file_path)
-    template_checksum = checksums.get("template") or (compute_file_checksum(template_path) if template_path else None)
-
-    try:
-        # Upload files to GridFS
-        json_id = upload_to_gridfs(
-            bucket=db.fs,
-            file_path=json_config_path,
-            original_filename=json_config_path.name,
-            content_type="application/json",
-            orphan_tracker=tracker,
-            precomputed_checksum=json_checksum,
-        )
-        sql_id = upload_to_gridfs(
-            bucket=db.fs,
-            file_path=sql_file_path,
-            original_filename=sql_file_path.name,
-            content_type=_detect_content_type(str(sql_file_path)),
-            orphan_tracker=tracker,
-            precomputed_checksum=sql_checksum,
-        )
-        template_id = None
-        if template_path:
-            template_id = upload_to_gridfs(
-                bucket=db.fs,
-                file_path=template_path,
-                original_filename=template_path.name,
-                content_type=_detect_content_type(str(template_path)),
-                orphan_tracker=tracker,
-                precomputed_checksum=template_checksum,
-            )
-
-        metadata = MetadataDocument(
-            unique_id=unique_id,
-            csi_id=bundle["csi_id"],
-            region=bundle["region"],
-            regulation=bundle["regulation"],
-            name=config["name"],
-            out_file_name=config["outFileName"],
-            original_files=OriginalFiles(
-                json_config=json_config_path.name,
-                template=template_path.name if template_path else None,
-                sql_file=sql_file_path.name,
-            ),
-            file_contents=FileContents(
-                json_config_id=str(json_id),
-                sql_file_id=str(sql_id),
-                template_id=str(template_id) if template_id else None,
-            ),
-            checksums=Checksums(
-                json_config=json_checksum,
-                template=template_checksum,
-                sql_file=sql_checksum,
-            ),
-            file_sizes=FileSizes(
-                json_config=json_config_path.stat().st_size,
-                template=template_path.stat().st_size if template_path else None,
-                sql_file=sql_file_path.stat().st_size,
-            ),
-            uploaded_at=datetime.now(timezone.utc),
-            active=True,
-            version=1,
-            audit_log=[AuditEntry(**create_audit_entry("CREATED", "Initial seed"))],
-        )
-
-        db.metadata_collection.insert_one(metadata.to_mongo_dict())
-
-        logger.info("seed.created unique_id=%s version=1 csi_id=%s region=%s", unique_id, bundle["csi_id"], bundle["region"])
-        tracker.clear()
-        return "created"
-
-    except Exception as exc:
-        tracker.cleanup()
-        raise DatabaseError(f"Failed to create record '{unique_id}': {exc}") from exc
+    report_id = _create_record(bundle, config)
+    logger.info("seed.create_single  DONE report_id=%s", report_id)
+    return report_id
 
 
-def _modify_record(unique_id: str, bundle: dict, config: dict, existing: dict, precomputed_checksums: dict | None = None) -> str:
-    db = get_db()
-    tracker = GridFSOrphanTracker()
-    old_version = existing.get("version", 1)
-    new_version = old_version + 1
-
-    checksums = precomputed_checksums or {}
-    json_config_path = Path(bundle["json_config"])
-    sql_file_path = Path(bundle["sql_file"])
-    template_path = Path(bundle["template"]) if bundle.get("template") else None
-
-    json_checksum = checksums.get("json_config") or compute_file_checksum(json_config_path)
-    sql_checksum = checksums.get("sql_file") or compute_file_checksum(sql_file_path)
-    template_checksum = checksums.get("template") or (compute_file_checksum(template_path) if template_path else None)
-
-    try:
-        # Upload files to GridFS
-        json_id = upload_to_gridfs(
-            bucket=db.fs,
-            file_path=json_config_path,
-            original_filename=json_config_path.name,
-            content_type="application/json",
-            orphan_tracker=tracker,
-            precomputed_checksum=json_checksum,
-        )
-        sql_id = upload_to_gridfs(
-            bucket=db.fs,
-            file_path=sql_file_path,
-            original_filename=sql_file_path.name,
-            content_type=_detect_content_type(str(sql_file_path)),
-            orphan_tracker=tracker,
-            precomputed_checksum=sql_checksum,
-        )
-        template_id = None
-        if template_path:
-            template_id = upload_to_gridfs(
-                bucket=db.fs,
-                file_path=template_path,
-                original_filename=template_path.name,
-                content_type=_detect_content_type(str(template_path)),
-                orphan_tracker=tracker,
-                precomputed_checksum=template_checksum,
-            )
-
-        def _do_modify(session=None):
-            db.metadata_collection.update_one(
-                {"_id": existing["_id"]},
-                {
-                    "$set": {"active": False},
-                    "$push": {"audit_log": create_audit_entry("DEACTIVATED", f"Superseded by version {new_version}")},
-                },
-                session=session,
-            )
-
-            metadata = MetadataDocument(
-                unique_id=unique_id,
-                csi_id=bundle["csi_id"],
-                region=bundle["region"],
-                regulation=bundle["regulation"],
-                name=config["name"],
-                out_file_name=config["outFileName"],
-                original_files=OriginalFiles(
-                    json_config=json_config_path.name,
-                    template=template_path.name if template_path else None,
-                    sql_file=sql_file_path.name,
-                ),
-                file_contents=FileContents(
-                    json_config_id=str(json_id),
-                    sql_file_id=str(sql_id),
-                    template_id=str(template_id) if template_id else None,
-                ),
-                checksums=Checksums(
-                    json_config=json_checksum,
-                    template=template_checksum,
-                    sql_file=sql_checksum,
-                ),
-                file_sizes=FileSizes(
-                    json_config=json_config_path.stat().st_size,
-                    template=template_path.stat().st_size if template_path else None,
-                    sql_file=sql_file_path.stat().st_size,
-                ),
-                uploaded_at=datetime.now(timezone.utc),
-                active=True,
-                version=new_version,
-                audit_log=[AuditEntry(**create_audit_entry("MODIFIED", f"Updated from version {old_version} to {new_version}"))],
-            )
-
-            db.metadata_collection.insert_one(metadata.to_mongo_dict(), session=session)
-
-        if db.supports_transactions:
-            with db.start_session() as session:
-                session.start_transaction()
-                try:
-                    _do_modify(session=session)
-                    session.commit_transaction()
-                except Exception:
-                    session.abort_transaction()
-                    raise
-        else:
-            logger.warning("seed.modify_no_transaction unique_id=%s standalone=true", unique_id)
-            _do_modify(session=None)
-
-        logger.info("seed.modified unique_id=%s version=%d->%d", unique_id, old_version, new_version)
-        tracker.clear()
-        return "updated"
-
-    except Exception as exc:
-        tracker.cleanup()
-        raise DatabaseError(f"Transaction failed during modify of '{unique_id}': {exc}") from exc
-
+# ---------------------------------------------------------------------------
+# Public: modify by report_id
+# ---------------------------------------------------------------------------
 
 def modify_record_by_id(
-    unique_id: str,
+    report_id: str,
     json_config_path: Optional[str] = None,
     sql_file_path: Optional[str] = None,
     template_path: Optional[str] = None,
 ) -> int:
+    """Modify an existing record identified by report_id. Returns new version number."""
+    logger.info("seed.modify_by_id  report_id=%s", report_id)
+
     if not any([json_config_path, sql_file_path, template_path]):
         raise ValidationError("At least one file must be provided for modification.")
 
     db = get_db()
-    tracker = GridFSOrphanTracker()
-    existing = db.metadata_collection.find_one({"unique_id": unique_id, "active": True})
+    existing = db.metadata_collection.find_one({"report_id": report_id, "active": True})
     if not existing:
-        raise RecordNotFoundError(f"No active record found with unique_id '{unique_id}'")
+        raise RecordNotFoundError(f"No active record found with report_id '{report_id}'")
 
-    if json_config_path:
-        config = validate_json_config(json_config_path)
-    else:
-        config = None
+    logger.info(
+        "seed.modify_by_id  found v%d csi_id=%s regulation=%s region=%s",
+        existing.get("version", 1), existing["csi_id"], existing["regulation"], existing["region"],
+    )
+
+    config = validate_json_config(json_config_path) if json_config_path else None
 
     old_version = existing.get("version", 1)
     new_version = old_version + 1
+    tracker = GridFSOrphanTracker()
 
     try:
-        # Upload changed files to GridFS
-        # json_config
+        # Resolve per-file data
         if json_config_path:
             jc_path = Path(json_config_path)
             new_json_checksum = compute_file_checksum(jc_path)
+            logger.debug("seed.modify_by_id  uploading json_config")
             new_json_id = str(upload_to_gridfs(
-                bucket=db.fs,
-                file_path=jc_path,
-                original_filename=jc_path.name,
-                content_type="application/json",
-                orphan_tracker=tracker,
-                precomputed_checksum=new_json_checksum,
+                bucket=db.fs, file_path=jc_path,
+                original_filename=jc_path.name, content_type="application/json",
+                orphan_tracker=tracker, precomputed_checksum=new_json_checksum,
             ))
             new_json_size = jc_path.stat().st_size
             new_json_original = jc_path.name
@@ -395,17 +379,15 @@ def modify_record_by_id(
             new_json_size = existing["file_sizes"]["json_config"]
             new_json_original = existing["original_files"]["json_config"]
 
-        # sql_file
         if sql_file_path:
             sq_path = Path(sql_file_path)
             new_sql_checksum = compute_file_checksum(sq_path)
+            logger.debug("seed.modify_by_id  uploading sql_file")
             new_sql_id = str(upload_to_gridfs(
-                bucket=db.fs,
-                file_path=sq_path,
+                bucket=db.fs, file_path=sq_path,
                 original_filename=sq_path.name,
                 content_type=_detect_content_type(str(sq_path)),
-                orphan_tracker=tracker,
-                precomputed_checksum=new_sql_checksum,
+                orphan_tracker=tracker, precomputed_checksum=new_sql_checksum,
             ))
             new_sql_size = sq_path.stat().st_size
             new_sql_original = sq_path.name
@@ -415,17 +397,15 @@ def modify_record_by_id(
             new_sql_size = existing["file_sizes"]["sql_file"]
             new_sql_original = existing["original_files"]["sql_file"]
 
-        # template
         if template_path:
             tp_path = Path(template_path)
             new_template_checksum = compute_file_checksum(tp_path)
+            logger.debug("seed.modify_by_id  uploading template")
             new_template_id = str(upload_to_gridfs(
-                bucket=db.fs,
-                file_path=tp_path,
+                bucket=db.fs, file_path=tp_path,
                 original_filename=tp_path.name,
                 content_type=_detect_content_type(str(tp_path)),
-                orphan_tracker=tracker,
-                precomputed_checksum=new_template_checksum,
+                orphan_tracker=tracker, precomputed_checksum=new_template_checksum,
             ))
             new_template_size = tp_path.stat().st_size
             new_template_original = tp_path.name
@@ -435,82 +415,333 @@ def modify_record_by_id(
             new_template_size = existing["file_sizes"].get("template")
             new_template_original = existing["original_files"].get("template")
 
-        changed_parts = []
-        if json_config_path:
-            changed_parts.append("json_config")
-        if sql_file_path:
-            changed_parts.append("sql_file")
-        if template_path:
-            changed_parts.append("template")
+        changed_parts = [
+            p for p, v in [("json_config", json_config_path), ("sql_file", sql_file_path), ("template", template_path)]
+            if v
+        ]
 
         def _do_modify(session=None):
             db.metadata_collection.update_one(
-                {"_id": existing["_id"]},
+                {"report_id": report_id, "active": True},
                 {
                     "$set": {"active": False},
-                    "$push": {"audit_log": create_audit_entry("DEACTIVATED", f"Superseded by version {new_version}")},
+                    "$push": {"audit_log": create_audit_entry(
+                        "DEACTIVATED", f"Superseded by version {new_version}"
+                    )},
                 },
                 session=session,
             )
-
             metadata = MetadataDocument(
-                unique_id=unique_id,
-                csi_id=existing["csi_id"],
-                region=existing["region"],
+                report_id=report_id,
+                csi_id=existing["csi_id"], region=existing["region"],
                 regulation=existing["regulation"],
-                name=config["name"] if isinstance(config, dict) else existing["name"],
-                out_file_name=config["outFileName"] if isinstance(config, dict) else existing["out_file_name"],
+                name=config["name"] if config else existing["name"],
+                out_file_name=config["outFileName"] if config else existing["out_file_name"],
                 original_files=OriginalFiles(
                     json_config=new_json_original,
                     template=new_template_original,
                     sql_file=new_sql_original,
                 ),
                 file_contents=FileContents(
-                    json_config_id=new_json_id,
-                    sql_file_id=new_sql_id,
+                    json_config_id=new_json_id, sql_file_id=new_sql_id,
                     template_id=new_template_id,
                 ),
                 checksums=Checksums(
                     json_config=new_json_checksum,
-                    template=new_template_checksum,
-                    sql_file=new_sql_checksum,
+                    template=new_template_checksum, sql_file=new_sql_checksum,
                 ),
                 file_sizes=FileSizes(
                     json_config=new_json_size,
-                    template=new_template_size,
-                    sql_file=new_sql_size,
+                    template=new_template_size, sql_file=new_sql_size,
                 ),
                 uploaded_at=datetime.now(timezone.utc),
-                active=True,
-                version=new_version,
-                audit_log=[
-                    AuditEntry(
-                        **create_audit_entry(
-                            "MODIFIED",
-                            f"Updated files: {', '.join(changed_parts)} (v{old_version} → v{new_version})"
-                        )
-                    )
-                ],
+                active=True, version=new_version,
+                audit_log=[AuditEntry(**create_audit_entry(
+                    "MODIFIED",
+                    f"Updated {', '.join(changed_parts)} (v{old_version} → v{new_version})",
+                ))],
             )
-
             db.metadata_collection.insert_one(metadata.to_mongo_dict(), session=session)
 
-        if db.supports_transactions:
-            with db.start_session() as session:
-                session.start_transaction()
-                try:
-                    _do_modify(session=session)
-                    session.commit_transaction()
-                except Exception:
-                    session.abort_transaction()
-                    raise
-        else:
-            _do_modify(session=None)
-
-        logger.info("seed.modified_by_id unique_id=%s version=%d->%d", unique_id, old_version, new_version)
+        _run_with_transaction(db, _do_modify, context=f"modify report_id={report_id}")
         tracker.clear()
+        logger.info(
+            "seed.modify_by_id  DONE report_id=%s version=%d→%d changed=%s",
+            report_id, old_version, new_version, changed_parts,
+        )
         return new_version
 
     except Exception as exc:
         tracker.cleanup()
-        raise DatabaseError(f"Transaction failed during modify of '{unique_id}': {exc}") from exc
+        raise DatabaseError(f"Modify failed for report_id='{report_id}': {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Internal: create
+# ---------------------------------------------------------------------------
+
+def _create_record(bundle: dict, config: dict, precomputed_checksums: dict | None = None) -> str:
+    db = get_db()
+    tracker = GridFSOrphanTracker()
+
+    json_config_path = Path(bundle["json_config"])
+    sql_file_path = Path(bundle["sql_file"])
+    template_path = Path(bundle["template"]) if bundle.get("template") else None
+
+    checksums = precomputed_checksums or {}
+    json_checksum = checksums.get("json_config") or compute_file_checksum(json_config_path)
+    sql_checksum = checksums.get("sql_file") or compute_file_checksum(sql_file_path)
+    template_checksum = checksums.get("template") or (
+        compute_file_checksum(template_path) if template_path else None
+    )
+
+    try:
+        report_id = generate_report_id(db)
+        logger.debug("seed.create  report_id=%s — uploading files to GridFS", report_id)
+
+        json_id = upload_to_gridfs(
+            bucket=db.fs, file_path=json_config_path,
+            original_filename=json_config_path.name, content_type="application/json",
+            orphan_tracker=tracker, precomputed_checksum=json_checksum,
+        )
+        logger.debug("seed.create  report_id=%s — json_config uploaded id=%s", report_id, json_id)
+
+        sql_id = upload_to_gridfs(
+            bucket=db.fs, file_path=sql_file_path,
+            original_filename=sql_file_path.name,
+            content_type=_detect_content_type(str(sql_file_path)),
+            orphan_tracker=tracker, precomputed_checksum=sql_checksum,
+        )
+        logger.debug("seed.create  report_id=%s — sql_file uploaded id=%s", report_id, sql_id)
+
+        template_id = None
+        if template_path:
+            template_id = upload_to_gridfs(
+                bucket=db.fs, file_path=template_path,
+                original_filename=template_path.name,
+                content_type=_detect_content_type(str(template_path)),
+                orphan_tracker=tracker, precomputed_checksum=template_checksum,
+            )
+            logger.debug("seed.create  report_id=%s — template uploaded id=%s", report_id, template_id)
+
+        metadata = MetadataDocument(
+            report_id=report_id,
+            csi_id=bundle["csi_id"], region=bundle["region"],
+            regulation=bundle["regulation"],
+            name=config["name"], out_file_name=config["outFileName"],
+            original_files=OriginalFiles(
+                json_config=json_config_path.name,
+                template=template_path.name if template_path else None,
+                sql_file=sql_file_path.name,
+            ),
+            file_contents=FileContents(
+                json_config_id=str(json_id), sql_file_id=str(sql_id),
+                template_id=str(template_id) if template_id else None,
+            ),
+            checksums=Checksums(
+                json_config=json_checksum, template=template_checksum, sql_file=sql_checksum,
+            ),
+            file_sizes=FileSizes(
+                json_config=json_config_path.stat().st_size,
+                template=template_path.stat().st_size if template_path else None,
+                sql_file=sql_file_path.stat().st_size,
+            ),
+            uploaded_at=datetime.now(timezone.utc),
+            active=True, version=1,
+            audit_log=[AuditEntry(**create_audit_entry("CREATED", "Initial seed from manifest"))],
+        )
+
+        db.metadata_collection.insert_one(metadata.to_mongo_dict())
+        tracker.clear()
+        logger.info(
+            "seed.create  DONE report_id=%s csi_id=%s regulation=%s region=%s v1",
+            report_id, bundle["csi_id"], bundle["regulation"], bundle["region"],
+        )
+        return report_id
+
+    except Exception as exc:
+        tracker.cleanup()
+        raise DatabaseError(f"Failed to create record for csi_id='{bundle.get('csi_id')}': {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Internal: modify
+# ---------------------------------------------------------------------------
+
+def _modify_record(
+    report_id: str,
+    bundle: dict,
+    config: dict,
+    existing: dict,
+    precomputed_checksums: dict | None = None,
+) -> int:
+    db = get_db()
+    tracker = GridFSOrphanTracker()
+    old_version = existing.get("version", 1)
+    new_version = old_version + 1
+
+    checksums = precomputed_checksums or {}
+    json_config_path = Path(bundle["json_config"])
+    sql_file_path = Path(bundle["sql_file"])
+    template_path = Path(bundle["template"]) if bundle.get("template") else None
+
+    json_checksum = checksums.get("json_config") or compute_file_checksum(json_config_path)
+    sql_checksum = checksums.get("sql_file") or compute_file_checksum(sql_file_path)
+    template_checksum = checksums.get("template") or (
+        compute_file_checksum(template_path) if template_path else None
+    )
+
+    existing_checksums = existing.get("checksums", {})
+    existing_contents = existing.get("file_contents", {})
+    existing_sizes = existing.get("file_sizes", {})
+    existing_originals = existing.get("original_files", {})
+
+    changed_parts: list[str] = []
+
+    try:
+        # ── json_config ─────────────────────────────────────────────
+        if json_checksum != existing_checksums.get("json_config"):
+            logger.debug("seed.modify  report_id=%s — json_config changed, uploading", report_id)
+            json_id = str(upload_to_gridfs(
+                bucket=db.fs, file_path=json_config_path,
+                original_filename=json_config_path.name, content_type="application/json",
+                orphan_tracker=tracker, precomputed_checksum=json_checksum,
+            ))
+            json_size = json_config_path.stat().st_size
+            json_original = json_config_path.name
+            changed_parts.append("json_config")
+        else:
+            logger.debug("seed.modify  report_id=%s — json_config unchanged, reusing", report_id)
+            json_id = existing_contents["json_config_id"]
+            json_size = existing_sizes.get("json_config")
+            json_original = existing_originals.get("json_config")
+
+        # ── sql_file ────────────────────────────────────────────────
+        if sql_checksum != existing_checksums.get("sql_file"):
+            logger.debug("seed.modify  report_id=%s — sql_file changed, uploading", report_id)
+            sql_id = str(upload_to_gridfs(
+                bucket=db.fs, file_path=sql_file_path,
+                original_filename=sql_file_path.name,
+                content_type=_detect_content_type(str(sql_file_path)),
+                orphan_tracker=tracker, precomputed_checksum=sql_checksum,
+            ))
+            sql_size = sql_file_path.stat().st_size
+            sql_original = sql_file_path.name
+            changed_parts.append("sql_file")
+        else:
+            logger.debug("seed.modify  report_id=%s — sql_file unchanged, reusing", report_id)
+            sql_id = existing_contents["sql_file_id"]
+            sql_size = existing_sizes.get("sql_file")
+            sql_original = existing_originals.get("sql_file")
+
+        # ── template ────────────────────────────────────────────────
+        if template_path and template_checksum != existing_checksums.get("template"):
+            logger.debug("seed.modify  report_id=%s — template changed, uploading", report_id)
+            template_id = str(upload_to_gridfs(
+                bucket=db.fs, file_path=template_path,
+                original_filename=template_path.name,
+                content_type=_detect_content_type(str(template_path)),
+                orphan_tracker=tracker, precomputed_checksum=template_checksum,
+            ))
+            template_size = template_path.stat().st_size
+            template_original = template_path.name
+            changed_parts.append("template")
+        else:
+            # Carry over existing template refs (may be None if never had one)
+            logger.debug("seed.modify  report_id=%s — template unchanged/absent, reusing", report_id)
+            template_id = existing_contents.get("template_id")
+            template_size = existing_sizes.get("template")
+            template_original = existing_originals.get("template")
+            if template_path:
+                # template provided but checksum matched
+                pass
+            else:
+                # No template in this bundle run — preserve existing
+                template_checksum = existing_checksums.get("template")
+
+        if not changed_parts:
+            # Shouldn't normally happen since _process_bundle checks checksums first,
+            # but guard here defensively.
+            logger.info("seed.modify  report_id=%s — no actual changes detected (all checksums match)", report_id)
+            tracker.clear()
+            return old_version
+
+        def _do_modify(session=None):
+            db.metadata_collection.update_one(
+                {"report_id": report_id, "active": True},
+                {
+                    "$set": {"active": False},
+                    "$push": {"audit_log": create_audit_entry(
+                        "DEACTIVATED", f"Superseded by version {new_version}"
+                    )},
+                },
+                session=session,
+            )
+            metadata = MetadataDocument(
+                report_id=report_id,
+                csi_id=bundle["csi_id"], region=bundle["region"],
+                regulation=bundle["regulation"],
+                name=config["name"], out_file_name=config["outFileName"],
+                original_files=OriginalFiles(
+                    json_config=json_original,
+                    template=template_original,
+                    sql_file=sql_original,
+                ),
+                file_contents=FileContents(
+                    json_config_id=json_id, sql_file_id=sql_id,
+                    template_id=template_id,
+                ),
+                checksums=Checksums(
+                    json_config=json_checksum,
+                    template=template_checksum,
+                    sql_file=sql_checksum,
+                ),
+                file_sizes=FileSizes(
+                    json_config=json_size,
+                    template=template_size,
+                    sql_file=sql_size,
+                ),
+                uploaded_at=datetime.now(timezone.utc),
+                active=True, version=new_version,
+                audit_log=[AuditEntry(**create_audit_entry(
+                    "MODIFIED",
+                    f"Changed: {', '.join(changed_parts)} (v{old_version} → v{new_version})",
+                ))],
+            )
+            db.metadata_collection.insert_one(metadata.to_mongo_dict(), session=session)
+
+        _run_with_transaction(db, _do_modify, context=f"modify report_id={report_id}")
+        tracker.clear()
+        logger.info(
+            "seed.modify  DONE report_id=%s version=%d→%d changed=%s",
+            report_id, old_version, new_version, changed_parts,
+        )
+        return new_version
+
+    except Exception as exc:
+        tracker.cleanup()
+        raise DatabaseError(
+            f"Modify failed for report_id='{report_id}': {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Helper: transaction wrapper
+# ---------------------------------------------------------------------------
+
+def _run_with_transaction(db, operation, context: str = "") -> None:
+    """Run `operation(session=...)` inside a transaction if supported, else bare."""
+    if db.supports_transactions:
+        with db.start_session() as session:
+            session.start_transaction()
+            try:
+                operation(session=session)
+                session.commit_transaction()
+                logger.debug("seed.tx  committed context=%s", context)
+            except Exception:
+                session.abort_transaction()
+                logger.error("seed.tx  aborted context=%s", context)
+                raise
+    else:
+        logger.warning("seed.tx  no_transaction context=%s (standalone MongoDB)", context)
+        operation(session=None)

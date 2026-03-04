@@ -1,8 +1,29 @@
 bundles:
-  # Example bundle
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Rules:
+  #   • No report_id supplied → always CREATE a new record.
+  #     A 7-digit report_id is printed after creation — save it.
+  #
+  #   • report_id supplied → MODIFY that exact record (mandatory for updates).
+  #     - Skips silently if all file checksums are unchanged.
+  #     - Fails if the report_id does not exist or fields don't match.
+  #
+  # All file paths are relative to this file's directory.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # ── CREATE (first run — no report_id) ────────────────────────────
   # - csi_id: "CSI-001"
   #   region: "APAC"
   #   regulation: "MAS-TRM"
   #   json_config: "configs/mas_trm_report.json"
-  #   template: "templates/mas_trm_template.txt"
   #   sql_file: "sql/mas_trm_query.sql"
+  #   template: "templates/mas_trm_template.txt"   # optional
+
+  # ── MODIFY (subsequent runs — report_id required) ─────────────────
+  # - csi_id: "CSI-001"
+  #   region: "APAC"
+  #   regulation: "MAS-TRM"
+  #   json_config: "configs/mas_trm_report_v2.json"
+  #   sql_file: "sql/mas_trm_query.sql"
+  #   report_id: "0000001"   # ← from the CREATE output; mandatory to update
+

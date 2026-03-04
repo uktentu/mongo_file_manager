@@ -3,13 +3,15 @@
 import hashlib
 from pathlib import Path
 
+from src.errors.exceptions import FileNotFoundError as SeederFileNotFoundError
+
 CHUNK_SIZE = 8192
 
 
 def compute_file_checksum(file_path: str | Path) -> str:
     path = Path(file_path)
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+        raise SeederFileNotFoundError(f"File not found for checksum: {path}")
 
     sha256 = hashlib.sha256()
     with open(path, "rb") as f:

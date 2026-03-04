@@ -33,12 +33,20 @@ def _cleanup_gridfs_files(db, contents: dict) -> None:
             logger.warning("cleanup.gridfs_failed file=template id=%s error=%s", contents["template_id"], exc)
 
 
-def purge_old_versions(unique_id: str, keep_versions: int = 3, dry_run: bool = False) -> dict:
+def purge_old_versions(report_id: str, keep_versions: int = 3, dry_run: bool = False) -> dict:
     db = get_db()
 
-    all_versions = list(db.metadata_collection.find({"unique_id": unique_id}).sort("version", -1))
-    if not all_versions:
-        raise RecordNotFoundError(f"No records found with unique_id '{unique_id}'")
+    # Resolve the business composite key from the report_id
+    anchor = db.metadata_collection.find_one({"report_id": report_id})
+    if not anchor:
+        raise RecordNotFoundError(f"No records found with report_id '{report_id}'")
+
+    composite_query = {
+        "csi_id": anchor["csi_id"],
+        "regulation": anchor["regulation"],
+        "region": anchor["region"],
+    }
+    all_versions = list(db.metadata_collection.find(composite_query).sort("version", -1))
 
     active_ids = {r["_id"] for r in all_versions if r.get("active")}
     non_active = [r for r in all_versions if r["_id"] not in active_ids]
@@ -56,53 +64,77 @@ def purge_old_versions(unique_id: str, keep_versions: int = 3, dry_run: bool = F
     }
 
     if not to_purge:
-        logger.info("cleanup.noop unique_id=%s total=%d keep=%d", unique_id, len(all_versions), keep_versions)
+        logger.info("cleanup.noop report_id=%s total=%d keep=%d", report_id, len(all_versions), keep_versions)
         return result
 
     if dry_run:
         result["purged"] = len(to_purge)
-        logger.info("cleanup.dry_run unique_id=%s would_purge=%d", unique_id, len(to_purge))
+        logger.info("cleanup.dry_run report_id=%s would_purge=%d", report_id, len(to_purge))
         return result
 
     for record in to_purge:
         version = record.get("version", "?")
         try:
-            # First cleanup associated GridFS files
             _cleanup_gridfs_files(db, record.get("file_contents", {}))
-
-            # Then delete the document itself
             db.metadata_collection.delete_one({"_id": record["_id"]})
             result["purged"] += 1
-            logger.info("cleanup.purged unique_id=%s version=%s", unique_id, version)
+            logger.info("cleanup.purged report_id=%s version=%s", report_id, version)
         except Exception as exc:
             result["errors"].append(f"version {version}: {exc}")
-            logger.error("cleanup.purge_failed unique_id=%s version=%s error=%s", unique_id, version, exc)
+            logger.error("cleanup.purge_failed report_id=%s version=%s error=%s", report_id, version, exc)
 
-    logger.info("cleanup.complete unique_id=%s purged=%d", unique_id, result["purged"])
+    logger.info("cleanup.complete report_id=%s purged=%d", report_id, result["purged"])
     return result
 
 
 def purge_all_old_versions(keep_versions: int = 3, dry_run: bool = False) -> dict:
     db = get_db()
-    unique_ids = db.metadata_collection.distinct("unique_id")
+
+    # Collect all distinct logical records by composite key
+    pipeline = [
+        {"$group": {"_id": {"csi_id": "$csi_id", "regulation": "$regulation", "region": "$region"}}},
+    ]
+    composite_keys = [doc["_id"] for doc in db.metadata_collection.aggregate(pipeline)]
 
     aggregate: dict[str, Any] = {
         "total_purged": 0,
-        "records_processed": len(unique_ids),
+        "records_processed": len(composite_keys),
         "errors": [],
         "dry_run": dry_run,
     }
 
-    logger.info("cleanup.global_start records=%d keep=%d dry_run=%s", len(unique_ids), keep_versions, dry_run)
+    logger.info("cleanup.global_start records=%d keep=%d dry_run=%s", len(composite_keys), keep_versions, dry_run)
 
-    for uid in unique_ids:
+    for key in composite_keys:
         try:
-            result = purge_old_versions(uid, keep_versions=keep_versions, dry_run=dry_run)
-            aggregate["total_purged"] += result["purged"]
-            aggregate["errors"].extend(result.get("errors", []))
+            all_versions = list(
+                db.metadata_collection.find(key).sort("version", -1)
+            )
+            active_ids = {r["_id"] for r in all_versions if r.get("active")}
+            non_active = [r for r in all_versions if r["_id"] not in active_ids]
+            protected = [r for r in all_versions if r["_id"] in active_ids]
+
+            slots_remaining = max(0, keep_versions - len(protected))
+            to_purge = non_active[slots_remaining:]
+
+            if dry_run:
+                aggregate["total_purged"] += len(to_purge)
+                continue
+
+            for record in to_purge:
+                version = record.get("version", "?")
+                try:
+                    _cleanup_gridfs_files(db, record.get("file_contents", {}))
+                    db.metadata_collection.delete_one({"_id": record["_id"]})
+                    aggregate["total_purged"] += 1
+                    logger.info("cleanup.global_purged key=%s version=%s", key, version)
+                except Exception as exc:
+                    aggregate["errors"].append(f"key={key} version={version}: {exc}")
+                    logger.error("cleanup.global_purge_failed key=%s version=%s error=%s", key, version, exc)
+
         except Exception as exc:
-            aggregate["errors"].append(f"{uid}: {exc}")
-            logger.error("cleanup.global_record_failed unique_id=%s error=%s", uid, exc)
+            aggregate["errors"].append(f"key={key}: {exc}")
+            logger.error("cleanup.global_record_failed key=%s error=%s", key, exc)
 
     logger.info(
         "cleanup.global_complete processed=%d purged=%d",

@@ -1,34 +1,29 @@
 """CLI entry point for the MongoDB Document Seeder."""
 
-import logging
 import sys
 
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.logging import RichHandler
 
 from src.config.database import get_db
+from src.config.logging_config import configure_logging
 from src.errors.exceptions import SeederError
 
 console = Console()
 
 
 def setup_logging(level: str = "INFO"):
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, console=console)],
-    )
+    """Wire up logging from Settings; --verbose overrides the level only."""
+    configure_logging(level=level)
 
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging.")
 def cli(verbose):
     """MongoDB Document Seeder — Seed, manage, and track regulatory document bundles."""
-    setup_logging("DEBUG" if verbose else "INFO")
+    setup_logging("DEBUG" if verbose else None)
 
 
 @cli.command()
@@ -42,15 +37,51 @@ def seed(manifest):
         console.print(Panel(f"[bold blue]Seeding from:[/] {manifest}", title="🌱 Seeder", border_style="blue"))
         results = seed_from_manifest(manifest)
 
-        table = Table(title="Seed Results", show_header=True)
-        table.add_column("Status", style="bold")
-        table.add_column("Count", justify="right")
-        table.add_row("✅ Created", str(results["created"]), style="green")
-        table.add_row("🔄 Updated", str(results["updated"]), style="yellow")
-        table.add_row("⏭️  Skipped", str(results["skipped"]), style="dim")
-        table.add_row("❌ Failed", str(results["failed"]), style="red")
-        console.print(table)
+        # ── Summary counts table ──────────────────────────────
+        summary = Table(title="Seed Summary", show_header=True, box=None)
+        summary.add_column("Status", style="bold")
+        summary.add_column("Count", justify="right")
+        summary.add_row("✅ Created", str(results["created"]), style="green")
+        summary.add_row("🔄 Updated", str(results["updated"]), style="yellow")
+        summary.add_row("⏭️  Skipped", str(results["skipped"]), style="dim")
+        summary.add_row("❌ Failed",  str(results["failed"]),  style="red")
+        summary.add_row("[bold]Total[/]",   str(results["total"]))
+        console.print(summary)
 
+        # ── Per-bundle detail table ───────────────────────────
+        if results.get("details"):
+            detail_table = Table(
+                title="Bundle Details",
+                show_header=True, show_lines=True,
+            )
+            detail_table.add_column("#",          justify="right",  style="dim", width=3)
+            detail_table.add_column("Label",      style="bold",     max_width=20)
+            detail_table.add_column("Status",     justify="center", width=10)
+            detail_table.add_column("Report ID",  style="cyan",     width=9)
+            detail_table.add_column("Ver",        justify="right",  width=4)
+            detail_table.add_column("Reason / Error")
+
+            status_style = {
+                "created": "[green]CREATED[/]",
+                "updated": "[yellow]UPDATED[/]",
+                "skipped": "[dim]SKIPPED[/]",
+                "failed":  "[bold red]FAILED[/]",
+            }
+
+            for d in results["details"]:
+                st = d["status"]
+                note = d["error"] if st == "failed" else d.get("reason", "")
+                detail_table.add_row(
+                    str(d["index"] + 1),
+                    d["label"],
+                    status_style.get(st, st),
+                    d.get("report_id") or "—",
+                    str(d["version"]) if d.get("version") else "—",
+                    note or "—",
+                )
+            console.print(detail_table)
+
+        # ── Errors block ──────────────────────────────────────
         if results["errors"]:
             console.print("\n[bold red]Errors:[/]")
             for err in results["errors"]:
@@ -75,12 +106,12 @@ def create(csi_id, region, regulation, json_config, sql_file, template):
 
     try:
         db = get_db()
-        unique_id = create_single_record(
+        report_id = create_single_record(
             csi_id=csi_id, region=region, regulation=regulation,
             json_config_path=json_config, sql_file_path=sql_file, template_path=template,
         )
         console.print(Panel(
-            f"[bold green]Record created![/]\n\n[bold]Unique ID:[/] {unique_id}",
+            f"[bold green]Record created![/]\n\n[bold]Report ID:[/] {report_id}",
             title="✅ Created", border_style="green",
         ))
         db.close()
@@ -90,11 +121,11 @@ def create(csi_id, region, regulation, json_config, sql_file, template):
 
 
 @cli.command()
-@click.option("--unique-id", "uid", required=True, help="Unique ID of the record to modify.")
+@click.option("--report-id", "report_id", required=True, help="7-digit Report ID of the record to modify.")
 @click.option("--config", "json_config", type=click.Path(exists=True), default=None, help="New JSON config.")
 @click.option("--sql", "sql_file", type=click.Path(exists=True), default=None, help="New SQL file.")
 @click.option("--template", type=click.Path(exists=True), default=None, help="New template file.")
-def modify(uid, json_config, sql_file, template):
+def modify(report_id, json_config, sql_file, template):
     """Modify an existing active record (append-only versioning)."""
     from src.services.seed_service import modify_record_by_id
 
@@ -105,11 +136,11 @@ def modify(uid, json_config, sql_file, template):
             sys.exit(1)
 
         new_version = modify_record_by_id(
-            unique_id=uid, json_config_path=json_config,
+            report_id=report_id, json_config_path=json_config,
             sql_file_path=sql_file, template_path=template,
         )
         console.print(Panel(
-            f"[bold green]Record modified![/]\n\n[bold]Unique ID:[/] {uid}\n[bold]New Version:[/] {new_version}",
+            f"[bold green]Record modified![/]\n\n[bold]Report ID:[/] {report_id}\n[bold]New Version:[/] {new_version}",
             title="🔄 Modified", border_style="yellow",
         ))
         db.close()
@@ -128,7 +159,7 @@ def list_records(show_all):
         db = get_db()
         if show_all:
             records = list(db.metadata_collection.find(
-                {}, {"unique_id": 1, "csi_id": 1, "region": 1, "regulation": 1,
+                {}, {"report_id": 1, "csi_id": 1, "region": 1, "regulation": 1,
                      "name": 1, "version": 1, "active": 1, "uploaded_at": 1},
             ))
         else:
@@ -140,7 +171,7 @@ def list_records(show_all):
             return
 
         table = Table(title="Document Records", show_header=True, show_lines=True)
-        table.add_column("Unique ID", style="cyan", max_width=40)
+        table.add_column("Report ID", style="cyan")
         table.add_column("CSI ID", style="bold")
         table.add_column("Region")
         table.add_column("Regulation")
@@ -155,7 +186,7 @@ def list_records(show_all):
             if hasattr(uploaded, "strftime"):
                 uploaded = uploaded.strftime("%Y-%m-%d %H:%M")
             table.add_row(
-                rec.get("unique_id", ""), rec.get("csi_id", ""), rec.get("region", ""),
+                rec.get("report_id", ""), rec.get("csi_id", ""), rec.get("region", ""),
                 rec.get("regulation", ""), rec.get("name", ""), str(rec.get("version", "")),
                 active_str, str(uploaded),
             )
@@ -168,17 +199,17 @@ def list_records(show_all):
 
 
 @cli.command()
-@click.option("--unique-id", "uid", required=True, help="Unique ID to show history for.")
-def history(uid):
+@click.option("--report-id", "report_id", required=True, help="Report ID to show history for.")
+def history(report_id):
     """Show all versions of a record."""
     from src.services.fetch_service import fetch_version_history
 
     try:
         db = get_db()
-        records = fetch_version_history(uid)
+        records = fetch_version_history(report_id)
 
         console.print(Panel(
-            f"[bold]Unique ID:[/] {uid}\n[bold]Total versions:[/] {len(records)}",
+            f"[bold]Report ID:[/] {report_id}\n[bold]Total versions:[/] {len(records)}",
             title="📜 Version History", border_style="blue",
         ))
 
@@ -214,20 +245,20 @@ def history(uid):
 
 
 @cli.command()
-@click.option("--unique-id", "uid", default=None, help="Fetch by unique ID.")
+@click.option("--report-id", "report_id", default=None, help="Fetch by Report ID.")
 @click.option("--csi-id", default=None, help="Fetch by CSI ID.")
 @click.option("--region", default=None, help="Fetch by region.")
 @click.option("--regulation", default=None, help="Fetch by regulation.")
-def fetch(uid, csi_id, region, regulation):
+def fetch(report_id, csi_id, region, regulation):
     """Fetch records by key."""
     from src.services.fetch_service import (
-        fetch_active_by_unique_id, fetch_by_csi_id, fetch_by_region, fetch_by_regulation,
+        fetch_active_by_report_id, fetch_by_csi_id, fetch_by_region, fetch_by_regulation,
     )
 
     try:
         db = get_db()
-        if uid:
-            record = fetch_active_by_unique_id(uid)
+        if report_id:
+            record = fetch_active_by_report_id(report_id)
             _display_record_detail(record)
         elif csi_id:
             _display_records_summary(fetch_by_csi_id(csi_id), f"CSI ID: {csi_id}")
@@ -245,18 +276,18 @@ def fetch(uid, csi_id, region, regulation):
 
 
 @cli.command()
-@click.option("--unique-id", "uid", required=True, help="Unique ID to export.")
+@click.option("--report-id", "report_id", required=True, help="Report ID to export.")
 @click.option("--output", "-o", "output_dir", required=True, type=click.Path(), help="Output directory.")
 @click.option("--version", "-V", "version", default=None, type=int, help="Specific version (default: active).")
 @click.option("--no-verify", is_flag=True, help="Skip checksum verification.")
 @click.option("--force", is_flag=True, help="Export even if checksums don't match.")
-def export(uid, output_dir, version, no_verify, force):
+def export(report_id, output_dir, version, no_verify, force):
     """Export a bundle's files from MongoDB back to disk."""
     from src.services.export_service import export_bundle
 
     try:
         db = get_db()
-        result = export_bundle(unique_id=uid, output_dir=output_dir, version=version, verify_checksums=not no_verify, force=force)
+        result = export_bundle(report_id=report_id, output_dir=output_dir, version=version, verify_checksums=not no_verify, force=force)
 
         files_info = "\n".join(f"  [bold]{k}:[/] {v}" for k, v in result.get("files", {}).items())
         checksums_info = "\n".join(
@@ -266,7 +297,7 @@ def export(uid, output_dir, version, no_verify, force):
 
         console.print(Panel(
             f"[bold green]Export complete![/]\n\n"
-            f"[bold]Unique ID:[/] {uid}\n[bold]Version:[/] {result.get('version')}\n[bold]Output:[/] {output_dir}\n\n"
+            f"[bold]Report ID:[/] {report_id}\n[bold]Version:[/] {result.get('version')}\n[bold]Output:[/] {output_dir}\n\n"
             f"[bold underline]Files:[/]\n{files_info}\n\n"
             f"[bold underline]Checksums:[/]\n{checksums_info or '  (skipped)'}",
             title="📦 Export", border_style="green",
@@ -278,12 +309,12 @@ def export(uid, output_dir, version, no_verify, force):
 
 
 @cli.command()
-@click.option("--unique-id", "uid", default=None, help="Purge old versions of a specific record.")
+@click.option("--report-id", "report_id", default=None, help="Purge old versions of a specific record.")
 @click.option("--all", "purge_all", is_flag=True, help="Purge old versions across all records.")
 @click.option("--keep", default=3, type=int, show_default=True, help="Versions to keep.")
 @click.option("--max-age-days", default=None, type=int, help="Purge inactive records older than N days.")
 @click.option("--dry-run", is_flag=True, help="Preview without deleting.")
-def cleanup(uid, purge_all, keep, max_age_days, dry_run):
+def cleanup(report_id, purge_all, keep, max_age_days, dry_run):
     """Purge old versions to manage storage growth."""
     from src.services.cleanup_service import purge_old_versions, purge_all_old_versions, purge_by_age
 
@@ -297,10 +328,10 @@ def cleanup(uid, purge_all, keep, max_age_days, dry_run):
                 f"Records older than {max_age_days} days purged: [bold]{result['purged']}[/]",
                 title="🧹 Cleanup", border_style="yellow",
             ))
-        elif uid:
-            result = purge_old_versions(uid, keep_versions=keep, dry_run=dry_run)
+        elif report_id:
+            result = purge_old_versions(report_id, keep_versions=keep, dry_run=dry_run)
             console.print(Panel(
-                f"[bold]{'[DRY RUN] ' if dry_run else ''}Version cleanup for: {uid}[/]\n\n"
+                f"[bold]{'[DRY RUN] ' if dry_run else ''}Version cleanup for: {report_id}[/]\n\n"
                 f"Purged: [bold]{result['purged']}[/]\nKept: [bold]{result['kept']}[/]",
                 title="🧹 Cleanup", border_style="yellow",
             ))
@@ -313,7 +344,7 @@ def cleanup(uid, purge_all, keep, max_age_days, dry_run):
                 title="🧹 Cleanup", border_style="yellow",
             ))
         else:
-            console.print("[bold red]Error:[/] Specify --unique-id, --all, or --max-age-days.", style="red")
+            console.print("[bold red]Error:[/] Specify --report-id, --all, or --max-age-days.", style="red")
             sys.exit(1)
 
         db.close()
@@ -328,7 +359,7 @@ def _display_record_detail(record: dict):
     sizes = record.get("file_sizes", {})
 
     console.print(Panel(
-        f"[bold]Unique ID:[/]   {record.get('unique_id')}\n"
+        f"[bold]Report ID:[/]   {record.get('report_id')}\n"
         f"[bold]CSI ID:[/]      {record.get('csi_id')}\n"
         f"[bold]Region:[/]      {record.get('region')}\n"
         f"[bold]Regulation:[/]  {record.get('regulation')}\n"
@@ -356,7 +387,7 @@ def _display_records_summary(records: list, label: str):
     console.print(f"\n[bold]Results for {label}:[/] {len(records)} record(s)\n")
 
     table = Table(show_header=True, show_lines=True)
-    table.add_column("Unique ID", style="cyan", max_width=40)
+    table.add_column("Report ID", style="cyan")
     table.add_column("CSI ID", style="bold")
     table.add_column("Region")
     table.add_column("Regulation")
@@ -364,7 +395,7 @@ def _display_records_summary(records: list, label: str):
 
     for rec in records:
         table.add_row(
-            rec.get("unique_id", ""), rec.get("csi_id", ""),
+            rec.get("report_id", ""), rec.get("csi_id", ""),
             rec.get("region", ""), rec.get("regulation", ""), str(rec.get("version", "")),
         )
 
