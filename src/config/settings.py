@@ -11,6 +11,9 @@ Environment variables (also see .env.example at the repo root):
 ├─────────────────────────┼───────────────────────────────────────────────┼──────────────────────────────────────────┤
 │ MONGO_URI               │ Full MongoDB connection string                 │ mongodb://localhost:27017                │
 │ MONGO_DB_NAME           │ Target database name                          │ doc_management                           │
+│ MONGO_METADATA_COLLECTION│ Collection to store document metadata        │ metadata                                 │
+│ MONGO_COUNTERS_COLLECTION│ Collection for atomic counters (report_id)   │ counters                                 │
+│ MONGO_GRIDFS_BUCKET     │ GridFS bucket name for binary file storage    │ fs                                       │
 │ MONGO_MAX_POOL_SIZE     │ Connection pool size                          │ 50                                       │
 │ MONGO_CONNECT_TIMEOUT_MS│ Connect timeout in milliseconds               │ 5000                                     │
 │ MONGO_SERVER_TIMEOUT_MS │ Server selection timeout in milliseconds      │ 5000                                     │
@@ -47,6 +50,9 @@ class Settings:
     # ── MongoDB ──────────────────────────────────────────────────────────────
     mongo_uri: str
     mongo_db_name: str
+    mongo_metadata_collection: str
+    mongo_counters_collection: str
+    mongo_gridfs_bucket: str
     mongo_max_pool_size: int
     mongo_connect_timeout_ms: int
     mongo_server_timeout_ms: int
@@ -75,6 +81,21 @@ class Settings:
             "MONGO_DB_NAME",
             default="doc_management",
             description="MongoDB database name",
+        )
+        self.mongo_metadata_collection = _require_env(
+            "MONGO_METADATA_COLLECTION",
+            default="metadata",
+            description="Collection for document metadata",
+        )
+        self.mongo_counters_collection = _require_env(
+            "MONGO_COUNTERS_COLLECTION",
+            default="counters",
+            description="Collection for atomic counters (report_id)",
+        )
+        self.mongo_gridfs_bucket = _require_env(
+            "MONGO_GRIDFS_BUCKET",
+            default="fs",
+            description="GridFS bucket name for binary file storage",
         )
         self.mongo_max_pool_size = _int_env("MONGO_MAX_POOL_SIZE", default=50)
         self.mongo_connect_timeout_ms = _int_env("MONGO_CONNECT_TIMEOUT_MS", default=5000)

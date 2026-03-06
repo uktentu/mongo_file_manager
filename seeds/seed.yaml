@@ -12,12 +12,12 @@ bundles:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   # ── CREATE (first run — no report_id) ────────────────────────────
-  # - csi_id: "CSI-001"
-  #   region: "APAC"
-  #   regulation: "MAS-TRM"
-  #   json_config: "configs/mas_trm_report.json"
-  #   sql_file: "sql/mas_trm_query.sql"
-  #   template: "templates/mas_trm_template.txt"   # optional
+  - csi_id: "CSI-001"
+    region: "APAC"
+    regulation: "MAS-TRM"
+    json_config: "configs/mas_trm_report.json"
+    sql_file: "sql/mas_trm_query.sql"
+    template: "templates/mas_trm_template.txt"   # optional
 
   # ── MODIFY (subsequent runs — report_id required) ─────────────────
   # - csi_id: "CSI-001"
