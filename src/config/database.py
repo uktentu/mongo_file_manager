@@ -197,6 +197,17 @@ def get_db() -> DatabaseManager:
     global _default_instance
     if _default_instance is None or _default_instance._client is None:
         _default_instance = create_db_manager()
+        return _default_instance
+    # Detect stale TCP connections (e.g. after network blip or idle timeout)
+    try:
+        _default_instance.client.admin.command("ping", check=False)
+    except Exception:
+        logger.warning("database.reconnecting stale connection detected — reconnecting")
+        try:
+            _default_instance.close()
+        except Exception:
+            pass
+        _default_instance = create_db_manager()
     return _default_instance
 
 

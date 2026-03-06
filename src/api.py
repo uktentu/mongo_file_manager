@@ -419,9 +419,18 @@ async def seed_manifest(req: SeedManifestRequest):
 @app.patch("/api/records/{report_id}", dependencies=[Depends(verify_api_key)])
 async def modify_record_api(report_id: str, req: ModifyBundleRequest):
     """
-    Modify a specific record by report_id using inline base64-encoded files.
+    Modify a specific record by internal UUID report_id using base64-encoded files.
     At least one file must be provided.
     """
+    import uuid as _uuid
+    try:
+        _uuid.UUID(report_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid report_id format: '{report_id}' must be a UUID (e.g. 'a1b2c3d4-e5f6-7890-abcd-ef1234567890')",
+        )
+
     from src.services.seed_service import modify_record_by_id
 
     if not any([req.json_config_content, req.sql_file_content, req.template_content]):

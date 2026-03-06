@@ -6,7 +6,7 @@ Flow for seed_from_manifest:
   Step 2: Pre-validate ALL bundles (collect errors before touching DB)
   Step 3: For each valid bundle:
     a. Compute checksums
-    b. Resolve existing record (by report_id if supplied, else by composite key)
+    b. Resolve existing record by composite key (csi_id + region + regulation + json_config filename)
     c. CREATE new record  — if no existing active record
     d. SKIP              — if all checksums match
     e. MODIFY            — if checksums changed
@@ -296,17 +296,20 @@ def create_single_record(
     # Validate files
     config = validate_json_config(json_config_path)
 
+    json_config_filename = Path(json_config_path).name
     db = get_db()
     existing = db.metadata_collection.find_one({
         "csi_id": csi_id,
         "regulation": regulation,
         "region": region,
+        "original_files.json_config": json_config_filename,
         "active": True,
     })
     if existing:
         raise DuplicateRecordError(
             f"An active record already exists for csi_id='{csi_id}' regulation='{regulation}' "
-            f"region='{region}' (report_id={existing.get('report_id')}). "
+            f"region='{region}' json_config='{json_config_filename}' "
+            f"(internal report_id={existing.get('report_id')}). "
             "Use 'modify' to update it."
         )
 

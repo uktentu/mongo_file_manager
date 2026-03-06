@@ -13,6 +13,11 @@ from src.services.gridfs_service import delete_from_gridfs
 logger = logging.getLogger(__name__)
 
 
+def _is_real_record(record: dict) -> bool:
+    """Return True only for genuine metadata records, excluding the counter sentinel doc."""
+    return isinstance(record.get("_id"), ObjectId)
+
+
 def _cleanup_gridfs_files(db, contents: dict) -> None:
     if contents.get("json_config_id"):
         try:
@@ -72,6 +77,7 @@ def purge_old_versions(report_id: str, keep_versions: int = 3, dry_run: bool = F
         logger.info("cleanup.dry_run report_id=%s would_purge=%d", report_id, len(to_purge))
         return result
 
+    to_purge = [r for r in to_purge if _is_real_record(r)]
     for record in to_purge:
         version = record.get("version", "?")
         try:
@@ -92,6 +98,7 @@ def purge_all_old_versions(keep_versions: int = 3, dry_run: bool = False) -> dic
 
     # Collect all distinct logical records by composite key
     pipeline = [
+        {"$match": {"_id": {"$ne": "report_id_seq"}}},   # exclude counter sentinel doc
         {"$group": {"_id": {"csi_id": "$csi_id", "regulation": "$regulation", "region": "$region"}}},
     ]
     composite_keys = [doc["_id"] for doc in db.metadata_collection.aggregate(pipeline)]
@@ -121,6 +128,7 @@ def purge_all_old_versions(keep_versions: int = 3, dry_run: bool = False) -> dic
                 aggregate["total_purged"] += len(to_purge)
                 continue
 
+            to_purge = [r for r in to_purge if _is_real_record(r)]
             for record in to_purge:
                 version = record.get("version", "?")
                 try:
@@ -159,6 +167,7 @@ def purge_by_age(max_age_days: int = 90, dry_run: bool = False) -> dict:
         logger.info("cleanup.age_dry_run max_age_days=%d would_purge=%d", max_age_days, len(old_records))
         return result
 
+    old_records = [r for r in old_records if _is_real_record(r)]
     for record in old_records:
         try:
             _cleanup_gridfs_files(db, record.get("file_contents", {}))

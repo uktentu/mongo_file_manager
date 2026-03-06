@@ -7,7 +7,7 @@ Validation layers:
   3. File existence + readability + non-empty content
   4. JSON config schema (required fields, value types, no blank strings)
   5. SQL file content (non-empty, UTF-8 readable)
-  6. report_id format when supplied (7-digit zero-padded string)
+  6. Template file extension allowlist
 """
 
 import json
@@ -26,7 +26,6 @@ _ALLOWED_TEMPLATE_EXTENSIONS = {".txt", ".html", ".jinja", ".j2", ".tmpl", ".xml
 
 # Simple token pattern: letters, digits, hyphens, underscores, dots
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]+$")
-_REPORT_ID_RE = re.compile(r"^\d{7}$")
 
 
 # ---------------------------------------------------------------------------
