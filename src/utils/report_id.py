@@ -1,4 +1,4 @@
-"""Atomic 7-digit report_id generator backed by a MongoDB counter."""
+"""Atomic 7-digit report_id generator — counter stored in the metadata collection."""
 
 import logging
 
@@ -13,11 +13,11 @@ def generate_report_id(db) -> str:
     Atomically increment the report_id sequence counter and return a
     zero-padded 7-digit string (e.g. '0000001').
 
-    Uses db.counters_collection (name configured via MONGO_COUNTERS_COLLECTION)
-    with findOneAndUpdate + upsert=True so the counter is created on first use
-    and is safe under concurrent inserts.
+    The counter is stored as a sentinel document {_id: 'report_id_seq'}
+    directly inside the metadata collection — no separate counters
+    collection is needed.
     """
-    result = db.counters_collection.find_one_and_update(
+    result = db.metadata_collection.find_one_and_update(
         {"_id": COUNTER_ID},
         {"$inc": {"seq": 1}},
         upsert=True,
