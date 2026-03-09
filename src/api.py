@@ -151,7 +151,7 @@ async def list_records(
     skip: int = Query(0, ge=0),
 ):
     db = get_db()
-    query: dict[str, Any] = {}
+    query: dict[str, Any] = {"_id": {"$type": "objectId"}}   # exclude counter sentinel doc
     if active_only:
         query["active"] = True
     if region:

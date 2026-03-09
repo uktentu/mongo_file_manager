@@ -57,7 +57,7 @@ def seed(manifest):
             detail_table.add_column("#",          justify="right",  style="dim", width=3)
             detail_table.add_column("Label",      style="bold",     max_width=20)
             detail_table.add_column("Status",     justify="center", width=10)
-            detail_table.add_column("Report ID",  style="cyan",     width=9)
+            detail_table.add_column("Report ID",  style="cyan",     min_width=36)
             detail_table.add_column("Ver",        justify="right",  width=4)
             detail_table.add_column("Reason / Error")
 
@@ -87,10 +87,11 @@ def seed(manifest):
             for err in results["errors"]:
                 console.print(f"  • {err}", style="red")
 
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        db.close()
 
 
 @cli.command()
@@ -104,6 +105,7 @@ def create(csi_id, region, regulation, json_config, sql_file, template):
     """Create a single new record."""
     from src.services.seed_service import create_single_record
 
+    db = None
     try:
         db = get_db()
         report_id = create_single_record(
@@ -114,10 +116,12 @@ def create(csi_id, region, regulation, json_config, sql_file, template):
             f"[bold green]Record created![/]\n\n[bold]Report ID:[/] {report_id}",
             title="✅ Created", border_style="green",
         ))
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        if db:
+            db.close()
 
 
 @cli.command()
@@ -135,6 +139,7 @@ def modify(csi_id, region, regulation, json_config, sql_file, template):
     """
     from src.services.seed_service import modify_record_by_composite_key
 
+    db = None
     try:
         db = get_db()
         new_version = modify_record_by_composite_key(
@@ -149,10 +154,12 @@ def modify(csi_id, region, regulation, json_config, sql_file, template):
             f"[bold]New Version:[/] {new_version}",
             title="🔄 Modified", border_style="yellow",
         ))
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        if db:
+            db.close()
 
 
 @cli.command("list")
@@ -173,11 +180,10 @@ def list_records(show_all):
 
         if not records:
             console.print("[dim]No records found.[/]")
-            db.close()
             return
 
         table = Table(title="Document Records", show_header=True, show_lines=True)
-        table.add_column("Report ID", style="cyan")
+        table.add_column("Report ID", style="cyan", min_width=36)
         table.add_column("CSI ID", style="bold")
         table.add_column("Region")
         table.add_column("Regulation")
@@ -198,10 +204,11 @@ def list_records(show_all):
             )
 
         console.print(table)
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        db.close()
 
 
 @cli.command()
@@ -210,6 +217,7 @@ def history(report_id):
     """Show all versions of a record."""
     from src.services.fetch_service import fetch_version_history
 
+    db = None
     try:
         db = get_db()
         records = fetch_version_history(report_id)
@@ -244,10 +252,12 @@ def history(report_id):
             table.add_row(str(rec.get("version", "")), active_str, str(uploaded), files, audit_str)
 
         console.print(table)
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        if db:
+            db.close()
 
 
 @cli.command()
@@ -261,6 +271,7 @@ def fetch(report_id, csi_id, region, regulation):
         fetch_active_by_report_id, fetch_by_csi_id, fetch_by_region, fetch_by_regulation,
     )
 
+    db = None
     try:
         db = get_db()
         if report_id:
@@ -275,10 +286,12 @@ def fetch(report_id, csi_id, region, regulation):
         else:
             console.print("[bold red]Error:[/] Provide at least one filter.", style="red")
             sys.exit(1)
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        if db:
+            db.close()
 
 
 @cli.command()
@@ -299,18 +312,19 @@ def export(report_id, output_dir, version, no_verify, force, file_keys):
 
     \b
       # Export all files (default)
-      python -m src.cli export --report-id 0000003 -o ./out
+      python -m src.cli export --report-id a1b2c3d4-e5f6-7890-abcd-ef1234567890 -o ./out
 
     \b
       # Export only the SQL file
-      python -m src.cli export --report-id 0000003 -o ./out --file sql_file
+      python -m src.cli export --report-id a1b2c3d4-e5f6-7890-abcd-ef1234567890 -o ./out --file sql_file
 
     \b
       # Export SQL + template only
-      python -m src.cli export --report-id 0000003 -o ./out --file sql_file --file template
+      python -m src.cli export --report-id a1b2c3d4-e5f6-7890-abcd-ef1234567890 -o ./out --file sql_file --file template
     """
     from src.services.export_service import export_bundle
 
+    db = None
     try:
         db = get_db()
         selected_files = set(file_keys) if file_keys else None
@@ -332,10 +346,12 @@ def export(report_id, output_dir, version, no_verify, force, file_keys):
             f"[bold underline]Checksums:[/]\n{checksums_info or '  (skipped)'}",
             title="📦 Export", border_style="green",
         ))
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        if db:
+            db.close()
 
 
 @cli.command()
@@ -348,6 +364,7 @@ def cleanup(report_id, purge_all, keep, max_age_days, dry_run):
     """Purge old versions to manage storage growth."""
     from src.services.cleanup_service import purge_old_versions, purge_all_old_versions, purge_by_age
 
+    db = None
     try:
         db = get_db()
 
@@ -376,11 +393,12 @@ def cleanup(report_id, purge_all, keep, max_age_days, dry_run):
         else:
             console.print("[bold red]Error:[/] Specify --report-id, --all, or --max-age-days.", style="red")
             sys.exit(1)
-
-        db.close()
     except SeederError as exc:
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
+    finally:
+        if db:
+            db.close()
 
 
 def _display_record_detail(record: dict):
@@ -416,7 +434,7 @@ def _display_records_summary(records: list, label: str):
     console.print(f"\n[bold]Results for {label}:[/] {len(records)} record(s)\n")
 
     table = Table(show_header=True, show_lines=True)
-    table.add_column("Report ID", style="cyan")
+    table.add_column("Report ID", style="cyan", min_width=36)
     table.add_column("CSI ID", style="bold")
     table.add_column("Region")
     table.add_column("Regulation")

@@ -28,7 +28,7 @@ def export_bundle(
     Export files from a stored bundle to disk.
 
     Args:
-        report_id:        7-digit report ID.
+        report_id:        Internal UUID report_id (shown in list/history output).
         output_dir:       Directory to write exported files into.
         version:          Specific version to export (default: active).
         verify_checksums: Validate checksums after download.

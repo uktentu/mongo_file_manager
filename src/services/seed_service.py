@@ -163,7 +163,7 @@ def seed_from_manifest(manifest_path: str | Path) -> dict[str, Any]:
             detail["report_id"] = report_id
             detail["version"] = version
             detail["reason"] = reason
-            results[status] += 1
+            results[status] = results.get(status, 0) + 1
             logger.info(
                 "seed.step3  '%s' → %s  report_id=%s version=%s reason=%s",
                 label, status.upper(), report_id, version, reason,
@@ -267,15 +267,20 @@ def _process_bundle(bundle: dict, config: dict) -> tuple[str, Optional[str], Opt
         )
         return "skipped", internal_report_id, existing.get("version"), "checksums unchanged"
 
+    # Identify which checksums actually changed (for meaningful log/reason)
+    changed = [
+        k for k in ("json_config", "sql_file", "template")
+        if existing_checksums.get(k) != precomputed.get(k)
+    ]
     logger.debug(
-        "seed.modify  report_id=%s v%d — checksums changed",
-        internal_report_id, existing.get("version", 1),
+        "seed.modify  report_id=%s v%d — changed files: %s",
+        internal_report_id, existing.get("version", 1), changed,
     )
     new_version = _modify_record(
         internal_report_id, bundle, config, existing,
         precomputed_checksums=precomputed,
     )
-    return "updated", internal_report_id, new_version, "checksums changed"
+    return "updated", internal_report_id, new_version, f"changed: {', '.join(changed)}"
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +602,10 @@ def _create_record(bundle: dict, config: dict, precomputed_checksums: dict | Non
             audit_log=[AuditEntry(**create_audit_entry("CREATED", "Initial seed from manifest"))],
         )
 
-        db.metadata_collection.insert_one(metadata.to_mongo_dict())
+        def _do_create(session=None):
+            db.metadata_collection.insert_one(metadata.to_mongo_dict(), session=session)
+
+        _run_with_transaction(db, _do_create, context=f"create csi_id={bundle.get('csi_id')}")
         tracker.clear()
         logger.info(
             "seed.create  DONE report_id=%s csi_id=%s regulation=%s region=%s v1",
@@ -658,7 +666,11 @@ def _modify_record(
             changed_parts.append("json_config")
         else:
             logger.debug("seed.modify  report_id=%s — json_config unchanged, reusing", report_id)
-            json_id = existing_contents["json_config_id"]
+            json_id = existing_contents.get("json_config_id")
+            if not json_id:
+                raise DatabaseError(
+                    f"Corrupt record report_id='{report_id}': missing json_config_id in file_contents"
+                )
             json_size = existing_sizes.get("json_config")
             json_original = existing_originals.get("json_config")
 
@@ -676,7 +688,11 @@ def _modify_record(
             changed_parts.append("sql_file")
         else:
             logger.debug("seed.modify  report_id=%s — sql_file unchanged, reusing", report_id)
-            sql_id = existing_contents["sql_file_id"]
+            sql_id = existing_contents.get("sql_file_id")
+            if not sql_id:
+                raise DatabaseError(
+                    f"Corrupt record report_id='{report_id}': missing sql_file_id in file_contents"
+                )
             sql_size = existing_sizes.get("sql_file")
             sql_original = existing_originals.get("sql_file")
 

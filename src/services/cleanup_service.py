@@ -42,7 +42,10 @@ def purge_old_versions(report_id: str, keep_versions: int = 3, dry_run: bool = F
     db = get_db()
 
     # Resolve the business composite key from the report_id
-    anchor = db.metadata_collection.find_one({"report_id": report_id})
+    anchor = db.metadata_collection.find_one({
+        "report_id": report_id,
+        "_id": {"$ne": "report_id_seq"},   # exclude counter sentinel doc
+    })
     if not anchor:
         raise RecordNotFoundError(f"No records found with report_id '{report_id}'")
 
