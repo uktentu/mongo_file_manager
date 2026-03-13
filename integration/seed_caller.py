@@ -8,14 +8,16 @@ MongoDB Document Seeder via HTTP API.
 Copy this file into your regulation repo, configure the constants at
 the top, then call it from your CI/CD pipeline:
 
-    python integration/seed_caller.py seeds/seed.yaml
+    python integration/seed_caller.py manifest seeds/seed.yaml
 
 Or for a single bundle:
 
-    python integration/seed_caller.py --single \
+    python integration/seed_caller.py bundle \
         --csi-id CSI-001 --region APAC --regulation MAS-TRM \
         --config configs/mas_trm_report.json \
         --sql sql/mas_trm_query.sql
+
+Routing is fully automatic (CREATE / MODIFY / SKIP) — no report_id needed.
 """
 
 import argparse
@@ -98,9 +100,6 @@ def seed_from_yaml(manifest_path: Path) -> None:
         if tmpl_path:
             entry["template_filename"] = tmpl_path.name
             entry["template_content"] = _b64(tmpl_path)
-        if b.get("report_id"):
-            entry["report_id"] = b["report_id"]
-
         api_bundles.append(entry)
 
     print(f"[seeder] Sending {len(api_bundles)} bundle(s) to {SEEDER_BASE_URL}/api/seed/manifest ...")
@@ -143,8 +142,6 @@ def seed_single(args) -> None:
     if tmpl_path:
         payload["template_filename"] = tmpl_path.name
         payload["template_content"] = _b64(tmpl_path)
-    if args.report_id:
-        payload["report_id"] = args.report_id
 
     print(f"[seeder] Sending bundle to {SEEDER_BASE_URL}/api/seed/bundle ...")
     result = _post("/api/seed/bundle", payload)
@@ -171,7 +168,6 @@ def main():
     single_parser.add_argument("--config", required=True, help="Path to JSON config file")
     single_parser.add_argument("--sql", required=True, help="Path to SQL file")
     single_parser.add_argument("--template", default=None, help="Path to template file (optional)")
-    single_parser.add_argument("--report-id", dest="report_id", default=None, help="Existing report_id to update")
 
     args = parser.parse_args()
 

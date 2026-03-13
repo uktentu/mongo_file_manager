@@ -70,7 +70,7 @@ def list_all_active(limit: int = DEFAULT_LIMIT) -> list[dict]:
             {"active": True},
             {
                 "report_id": 1, "csi_id": 1, "region": 1, "regulation": 1,
-                "name": 1, "out_file_name": 1, "version": 1, "uploaded_at": 1,
+                "name": 1, "version": 1, "uploaded_at": 1,
             },
         ).limit(limit)
     )
@@ -82,7 +82,10 @@ def fetch_version_history(report_id: str) -> list[dict]:
     """Return all versions (active + inactive) for the logical record identified by report_id."""
     db = get_db()
     # Anchor on the record with this report_id to get the composite business key
-    anchor = db.metadata_collection.find_one({"report_id": report_id})
+    anchor = db.metadata_collection.find_one({
+        "report_id": report_id,
+        "_id": {"$ne": "report_id_seq"},   # exclude counter sentinel doc
+    })
     if not anchor:
         raise RecordNotFoundError(f"No records found with report_id '{report_id}'")
 
