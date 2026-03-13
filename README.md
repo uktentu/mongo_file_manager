@@ -4,7 +4,7 @@ A **standalone seeder engine** for regulatory document bundles. Regulation repos
 
 ---
 
-## Architecture — Standalone Service Model
+## Architecture
 
 ```
 ┌────────────────────────────────────────┐
@@ -23,13 +23,12 @@ A **standalone seeder engine** for regulatory document bundles. Regulation repos
 │  └──────────────────────────────────┘  │
 └────────────────────────────────────────┘
          ▲               ▲              ▲
-         │               │              │
   MAS-TRM repo     BASEL repo     DORA repo
-  (seed.yaml +    (seed.yaml +   (seed.yaml +
-  POST to API)    CLI call)       POST to API)
+  (seed.yaml /     (seed.yaml /   (seed.yaml /
+  HTTP API)        CLI)           HTTP API)
 ```
 
-External regulation repos **never write to a database directly**. They call this service (HTTP or CLI) with their config files — the seeder handles storage, versioning, and deduplication.
+External regulation repos **never write to MongoDB directly**. They push file content to this service via HTTP or CLI — the seeder handles storage, versioning, deduplication, and audit logging.
 
 ---
 
@@ -37,257 +36,375 @@ External regulation repos **never write to a database directly**. They call this
 
 ```
 ├── src/
-│   ├── cli.py                 ← CLI entry point (Click + Rich)
-│   ├── api.py                 ← REST API (FastAPI)
+│   ├── api.py                 ← FastAPI REST endpoints
+│   ├── cli.py                 ← Click + Rich CLI commands
 │   ├── config/
-│   │   ├── settings.py        ← Central config (all env vars, typed + validated)
-│   │   ├── logging_config.py  ← Centralized logging setup (text / JSON)
-│   │   └── database.py        ← MongoDB connection manager + auto-reconnect
+│   │   ├── settings.py        ← All env vars (typed + validated via Pydantic)
+│   │   ├── logging_config.py  ← Structured logging (text / JSON)
+│   │   └── database.py        ← MongoDB connection + auto-reconnect + indexes
 │   ├── models/
-│   │   └── schemas.py         ← Pydantic data models
+│   │   └── schemas.py         ← Pydantic data models (MetadataDocument etc.)
 │   ├── services/
-│   │   ├── seed_service.py    ← Create & modify records (5-step flow)
-│   │   ├── fetch_service.py   ← Query records by report_id / composite key
-│   │   ├── export_service.py  ← Export bundles from GridFS to disk
-│   │   ├── cleanup_service.py ← Purge old versions
-│   │   ├── gridfs_service.py  ← GridFS upload/download/delete + retry
+│   │   ├── seed_service.py    ← Bulk seeding + single create/modify (5-step flow)
+│   │   ├── fetch_service.py   ← Query by report_id / composite key / region etc.
+│   │   ├── export_service.py  ← Download bundle files from GridFS to disk
+│   │   ├── cleanup_service.py ← Version retention + age-based purging
+│   │   ├── gridfs_service.py  ← GridFS upload / download / delete + retry
 │   │   └── audit_service.py   ← Audit log entry factory
 │   ├── utils/
-│   │   ├── checksum.py        ← SHA-256 file hashing
-│   │   ├── report_id.py       ← UUID-based internal ID generator
-│   │   ├── validator.py       ← Layered manifest/bundle/file/schema validation
-│   │   └── retry.py           ← Retry decorator with exponential backoff
+│   │   ├── checksum.py        ← SHA-256 hashing (file + bytes)
+│   │   ├── report_id.py       ← UUID v4 internal ID generator
+│   │   ├── validator.py       ← 6-layer validation (manifest → file → schema)
+│   │   └── retry.py           ← Exponential backoff decorator for MongoDB ops
 │   └── errors/
 │       └── exceptions.py      ← Custom exception hierarchy
 ├── integration/
-│   └── seed_caller.py         ← Drop-in caller script for external repos
+│   └── seed_caller.py         ← Drop-in HTTP caller for external regulation repos
 ├── seeds/
-│   └── seed.yaml              ← Template manifest (copy to your regulation repo)
+│   └── seed.yaml              ← Manifest template
 ├── .env.example               ← All supported environment variables with docs
 ├── Dockerfile
 ├── docker-compose.yml
-└── entrypoint.sh              ← Server-only startup (no auto-seeding)
+└── entrypoint.sh
 ```
 
 ---
 
 ## Quick Start
 
-### 1. Configure Environment
-
 ```bash
-cp .env.example .env
-# Edit .env — at minimum set MONGO_URI and MONGO_DB_NAME
-```
+cp .env.example .env          # Set MONGO_URI and optionally API_KEY
 
-> See [Environment Variables](#environment-variables) for the full list.
-
-### 2a. Run with Docker (recommended)
-
-```bash
+# Run with Docker
 docker-compose up -d --build
-```
 
-### 2b. Run Manually (development)
-
-```bash
+# Or run manually
 pip install -r requirements.txt
 uvicorn src.api:app --reload --port 8000
-# or
-gunicorn src.api:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
-
-The container **starts the API server only** — seeding is triggered on-demand by external regulation repos.
 
 ---
 
 ## Environment Variables
 
-All config lives in `src/config/settings.py`. Every variable is documented in `.env.example`.
-
-| Variable | Type | Default | Required in Prod |
+| Variable | Default | Required in Prod | Description |
 |---|---|---|---|
-| `MONGO_URI` | str | `mongodb://localhost:27017` | ✅ |
-| `MONGO_DB_NAME` | str | `doc_management` | — |
-| `MONGO_MAX_POOL_SIZE` | int | `50` | — |
-| `MONGO_CONNECT_TIMEOUT_MS` | int | `5000` | — |
-| `MONGO_SERVER_TIMEOUT_MS` | int | `5000` | — |
-| `API_KEY` | str | `""` (auth off) | ✅ (enforced) |
-| `API_HOST` | str | `0.0.0.0` | — |
-| `API_PORT` | int | `8000` | — |
-| `API_WORKERS` | int | `2` | — |
-| `LOG_LEVEL` | str | `INFO` | — |
-| `LOG_FORMAT` | str | `text` | — (`json` for aggregators) |
-| `ENVIRONMENT` | str | `development` | — |
+| `MONGO_URI` | `mongodb://localhost:27017` | ✅ | Full MongoDB connection string |
+| `MONGO_DB_NAME` | `doc_management` | — | Target database name |
+| `MONGO_METADATA_COLLECTION` | `metadata` | — | Metadata collection name |
+| `MONGO_GRIDFS_BUCKET` | `fs` | — | GridFS bucket name |
+| `MONGO_MAX_POOL_SIZE` | `50` | — | Connection pool ceiling |
+| `MONGO_CONNECT_TIMEOUT_MS` | `5000` | — | Connection timeout |
+| `MONGO_SERVER_TIMEOUT_MS` | `5000` | — | Server selection timeout |
+| `API_KEY` | `""` (auth off) | ✅ | X-API-Key header value |
+| `API_HOST` | `0.0.0.0` | — | Bind address |
+| `API_PORT` | `8000` | — | Bind port |
+| `API_WORKERS` | `2` | — | Gunicorn worker count |
+| `LOG_LEVEL` | `INFO` | — | `DEBUG/INFO/WARNING/ERROR` |
+| `LOG_FORMAT` | `text` | — | `text` or `json` |
+| `ENVIRONMENT` | `development` | — | `development/staging/production` |
 
-> **Production guard:** `ENVIRONMENT=production` with no `API_KEY` → startup fails immediately.
-
----
-
-## How External Repos Call This Service
-
-### Option A — HTTP API (deployed service)
-
-Copy `integration/seed_caller.py` into your regulation repo:
-
-```bash
-# Seed from your seed.yaml
-SEEDER_BASE_URL=https://seeder.internal \
-SEEDER_API_KEY=your-secret-key \
-  python integration/seed_caller.py manifest seeds/seed.yaml
-
-# Or seed a single bundle inline
-SEEDER_BASE_URL=https://seeder.internal \
-SEEDER_API_KEY=your-secret-key \
-  python integration/seed_caller.py bundle \
-    --csi-id CSI-001 --region APAC --regulation MAS-TRM \
-    --config configs/report.json --sql sql/query.sql
-```
-
-The script base64-encodes your files and POSTs to `/api/seed/manifest` or `/api/seed/bundle`. Exits non-zero if any bundle fails — CI/CD pipeline friendly.
-
-### Option B — CLI (seeder cloned locally / in monorepo)
-
-```bash
-python -m src.cli seed /path/to/regulation-repo/seeds/seed.yaml
-```
+> **Production guard:** `ENVIRONMENT=production` without `API_KEY` → boot fails immediately.
 
 ---
 
 ## seed.yaml Format
 
-Create a `seeds/seed.yaml` in your regulation repo. File paths are relative to the YAML file.
-
 ```yaml
 bundles:
-  # Routing is fully automatic — no report_id needed, ever.
-  #
-  # The composite key (csi_id + region + regulation + json_config filename) determines:
-  #   No active record found  → CREATE  (internal UUID assigned)
-  #   Record found, unchanged → SKIP    (idempotent re-run, nothing written)
-  #   Record found, changed   → MODIFY  (new version, only changed files re-uploaded)
-  #
-  # json_config is always required:
-  #   Its filename is the lookup key AND its content is checksum-compared.
-  #   If the content changed, it is updated as part of the modification.
+  # Routing is fully automatic — no report_id needed.
+  # The composite key (csi_id + region + regulation + json_config filename) decides:
+  #   No active record  → CREATE  (UUID assigned internally)
+  #   Record found, unchanged  → SKIP  (idempotent re-run)
+  #   Record found, file changed → MODIFY  (new version, delta-upload)
 
   - csi_id: "CSI-001"
     region: "APAC"
     regulation: "MAS-TRM"
     json_config: "configs/mas_trm_report.json"   # filename = lookup key
     sql_file:    "sql/mas_trm_query.sql"
-    template:    "templates/mas_trm_template.txt"   # optional
+    template:    "templates/mas_trm_template.txt"  # optional
 ```
 
 ---
 
-## `report_id` — The Internal Identifier
+## `report_id` — Internal UUID Identifier
 
-Every record gets a **UUID v4** `report_id` (e.g. `a1b2c3d4-e5f6-7890-abcd-ef1234567890`) generated automatically on creation. You never supply or manage this value for seeding or modification.
+Every record receives a **UUID v4** `report_id` (e.g. `a1b2c3d4-e5f6-7890-abcd-ef1234567890`) generated on first creation. You **never supply** this for seeding or modification — routing is automatic.
 
-- Use `report_id` for targeted operations: `fetch`, `history`, `export`, `cleanup`, API `PATCH`
-- The composite key `(csi_id + regulation + region + json_config filename)` is the **user-facing primary key**
-- The seeder automatically routes to CREATE / MODIFY / SKIP — no explicit `report_id` needed
+Use `report_id` only for targeted operations: `fetch`, `history`, `export`, `cleanup`, and the `PATCH /api/records/{report_id}` endpoint.
 
 ---
 
-## Seeding Flow (5 Steps)
+## Seeding Flow — 5 Steps
 
 ```
-seed.start   manifest=seeds/seed.yaml
-seed.step1   Validating manifest structure
-seed.step1   OK — 3 bundle(s) found
-seed.step2   Pre-validating all bundles before database operations
-seed.step2   [1/3] CSI-001 — fields/files OK
-seed.step2   [2/3] CSI-002 — VALIDATION FAILED: sql_file not found
-seed.step3   Processing 2 validated bundle(s)
-seed.step3   ── Bundle [1/2] 'CSI-001' ──
-seed.create  DONE report_id=a1b2c3d4-... csi_id=CSI-001 v1
-seed.step3   'CSI-001' → CREATED  report_id=a1b2c3d4-... version=1
-seed.done    total=3 created=1 updated=0 skipped=0 failed=2
+Step 1  Load YAML → validate manifest structure
+Step 2  Pre-validate ALL bundles (collect errors before any DB write)
+Step 3  For each valid bundle:
+          a. Compute SHA-256 checksums for all files
+          b. Resolve existing record by composite key
+          c. No active record → CREATE  (upload all files, assign UUID)
+          d. Checksums unchanged → SKIP  (idempotent, nothing written)
+          e. Any checksum changed → MODIFY  (delta-upload only changed files, new version)
+Step 4  Log per-bundle result + summary
+Step 5  Return structured dict: created/updated/skipped/failed + details[]
 ```
-
-All bundles are **pre-validated before any DB write**. Failures are collected and reported without blocking successful bundles.
-
----
-
-## Validation Rules
-
-| Layer | What is checked |
-|---|---|
-| Manifest | Root is a dict, has `bundles` list, list is non-empty |
-| Bundle fields | Required keys present, non-empty, no illegal characters |
-| File existence | Each referenced file exists, is a regular file, non-empty |
-| Extensions | SQL → `.sql`; template → `.txt/.html/.jinja/.j2/.tmpl/.xml/.csv` |
-| JSON config | Valid JSON, root is a dict, has `report.name` (non-empty string) |
-| SQL content | Valid UTF-8, contains non-whitespace content |
 
 ---
 
 ## CLI Reference
 
 ```bash
-# Seed from manifest (auto CREATE / MODIFY / SKIP)
-python -m src.cli seed seeds/seed.yaml
+# ── Seed ──────────────────────────────────────────────────────────────────────
+python -m src.cli seed seeds/seed.yaml          # bulk seed from manifest
+python -m src.cli -v seed seeds/seed.yaml       # verbose (DEBUG logging)
 
-# Create a single record
+# ── Create ────────────────────────────────────────────────────────────────────
 python -m src.cli create \
   --csi-id CSI-003 --region US --regulation SOX \
-  --config path/to/config.json --sql path/to/query.sql
+  --config configs/sox.json --sql sql/sox.sql \
+  --template templates/sox.txt                  # optional
 
-# Modify an existing record by composite key
-# --config is always required (filename = lookup key)
+# ── Modify ────────────────────────────────────────────────────────────────────
+# --config is always required (filename = composite key lookup)
 python -m src.cli modify \
   --csi-id CSI-001 --region APAC --regulation MAS-TRM \
   --config configs/mas_trm_report.json \
-  --sql new_query.sql          # optional
+  --sql sql/updated_query.sql \                 # optional
+  --template templates/updated.txt              # optional
 
-# List all active records
-python -m src.cli list
-python -m src.cli list --all      # include inactive versions
+# ── List ──────────────────────────────────────────────────────────────────────
+python -m src.cli list                          # all active records
+python -m src.cli list --all                    # include inactive versions
 
-# Show full version history for a record
-python -m src.cli history --report-id <UUID>
+# ── Fetch ─────────────────────────────────────────────────────────────────────
+python -m src.cli fetch --report-id <UUID>      # by internal UUID
+python -m src.cli fetch --csi-id CSI-001        # by CSI ID (shows list)
+python -m src.cli fetch --region APAC           # by region
+python -m src.cli fetch --regulation MAS-TRM    # by regulation
 
-# Fetch a specific record
-python -m src.cli fetch --report-id <UUID>
-python -m src.cli fetch --region APAC
-python -m src.cli fetch --csi-id CSI-001
+# ── History ───────────────────────────────────────────────────────────────────
+python -m src.cli history --report-id <UUID>    # all versions + audit log
 
-# Export bundle files back to disk (with checksum verification)
-python -m src.cli export --report-id <UUID> -o ./exported/
-python -m src.cli export --report-id <UUID> -V 2 -o ./exported/       # specific version
-python -m src.cli export --report-id <UUID> -o ./exported/ --file sql_file  # single file
-python -m src.cli export --report-id <UUID> -o ./exported/ --force    # ignore checksum fail
+# ── Export ────────────────────────────────────────────────────────────────────
+python -m src.cli export --report-id <UUID> -o ./out/          # all files
+python -m src.cli export --report-id <UUID> -o ./out/ -V 2     # specific version
+python -m src.cli export --report-id <UUID> -o ./out/ \
+  --file sql_file                                # single file only
+python -m src.cli export --report-id <UUID> -o ./out/ --force  # skip checksum abort
 
-# Clean up old versions (keep N most recent)
-python -m src.cli cleanup --report-id <UUID> --keep 3 --dry-run
-python -m src.cli cleanup --all --keep 3
-python -m src.cli cleanup --max-age-days 90
-
-# Debug logging
-python -m src.cli -v seed seeds/seed.yaml
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+python -m src.cli cleanup --report-id <UUID> --keep 3 --dry-run  # preview
+python -m src.cli cleanup --report-id <UUID> --keep 3            # live
+python -m src.cli cleanup --all --keep 3                         # all records
+python -m src.cli cleanup --max-age-days 90                      # age-based
 ```
 
 ---
 
 ## REST API
 
-All endpoints (except `/api/health`) require `X-API-Key` header when `API_KEY` is set.
+All endpoints (except `/api/health`) require the `X-API-Key` header when `API_KEY` is set.
+
+### Records
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/health` | Health check, DB status, transaction support |
-| `GET` | `/api/records` | List records (filters: `region`, `regulation`, `csi_id`, `active_only`) |
-| `GET` | `/api/records/{report_id}` | Fetch active record (optional `?version=N`) |
-| `GET` | `/api/records/{report_id}/history` | Full version history |
-| `GET` | `/api/records/{report_id}/export` | Download bundle as ZIP |
-| `PATCH` | `/api/records/{report_id}` | Modify record with inline base64-encoded files |
-| `POST` | `/api/seed/bundle` | Seed a single bundle (base64 files in JSON body) |
-| `POST` | `/api/seed/manifest` | Seed multiple bundles (same structure as seed.yaml) |
-| `POST` | `/api/cleanup` | Run retention cleanup |
+| `GET` | `/api/health` | Health check — DB ping, transaction support, timestamp |
+| `GET` | `/api/records` | List records with optional filters and pagination |
+| `GET` | `/api/records/{report_id}` | Fetch a specific record (active version by default) |
+| `GET` | `/api/records/{report_id}/history` | Full version history with audit log |
+| `GET` | `/api/records/{report_id}/export` | Download bundle as ZIP (streams response) |
+| `PATCH` | `/api/records/{report_id}` | Modify a record by UUID with base64-encoded files |
 
-Interactive docs available at `/docs` (Swagger UI) when running locally.
+### Seeding
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/seed/bundle` | Seed a single bundle (base64 inline) |
+| `POST` | `/api/seed/manifest` | Seed multiple bundles at once |
+
+### Cleanup
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/cleanup` | Run retention cleanup (by report_id, global, or max age) |
+
+Interactive docs: `http://localhost:8000/docs` (Swagger UI)
+
+---
+
+### `GET /api/records` — Query Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `active_only` | bool | `true` | When false, includes inactive versions |
+| `region` | string | — | Filter by region |
+| `regulation` | string | — | Filter by regulation |
+| `csi_id` | string | — | Filter by CSI ID |
+| `limit` | int | `100` (max 1000) | Page size |
+| `skip` | int | `0` | Offset for pagination |
+
+**Response:**
+```json
+{
+  "records": [...],
+  "total": 42,
+  "limit": 100,
+  "skip": 0
+}
+```
+
+---
+
+### `POST /api/seed/bundle` — Request Body
+
+```json
+{
+  "csi_id": "CSI-001",
+  "region": "APAC",
+  "regulation": "MAS-TRM",
+  "json_config_filename": "mas_trm_report.json",
+  "json_config_content": "<base64-encoded bytes>",
+  "sql_file_filename": "mas_trm_query.sql",
+  "sql_file_content": "<base64-encoded bytes>",
+  "template_filename": "mas_trm_template.txt",   // optional
+  "template_content": "<base64-encoded bytes>"   // optional
+}
+```
+
+**Response (201):**
+```json
+{ "status": "created", "report_id": "<UUID>", "version": 1, "reason": "Initial seed" }
+```
+`status` is one of: `"created"`, `"updated"`, `"skipped"`
+
+---
+
+### `PATCH /api/records/{report_id}` — Request Body
+
+```json
+{
+  "json_config_filename": "mas_trm_report.json",
+  "json_config_content": "<base64>",   // optional
+  "sql_file_filename": "updated.sql",
+  "sql_file_content": "<base64>",      // optional
+  "template_filename": "new.txt",
+  "template_content": "<base64>"       // optional
+}
+```
+At least one file must be provided. `report_id` must be a valid UUID.
+
+---
+
+### `POST /api/cleanup` — Request Body
+
+```json
+{
+  "report_id": "<UUID>",    // optional — target one record
+  "purge_all": false,       // optional — sweep all records
+  "keep_versions": 3,       // versions to retain (default: 3)
+  "max_age_days": 90,       // purge inactive versions older than N days
+  "dry_run": false          // preview without writing
+}
+```
+Specify exactly one of: `report_id`, `purge_all: true`, or `max_age_days`.
+
+---
+
+## Service Methods
+
+### `seed_service`
+
+| Function | Description |
+|---|---|
+| `seed_from_manifest(manifest_path)` | Load YAML, validate all bundles, process each → CREATE / MODIFY / SKIP |
+| `create_single_record(csi_id, region, regulation, json_config_path, sql_file_path, template_path?)` | Create one record via composite key (used by CLI `create`) |
+| `modify_record_by_id(report_id, json_config_path?, sql_file_path?, template_path?)` | Modify by internal UUID; delta-uploads only changed files |
+| `_process_bundle(bundle, config)` | Core router: SKIP / MODIFY / CREATE per bundle |
+| `_create_record(bundle, config, db)` | Insert new metadata doc + upload all files to GridFS (transactional) |
+| `_modify_record(report_id, ..., db)` | Deactivate old version, insert new version, delta-upload changed files |
+
+### `fetch_service`
+
+| Function | Description |
+|---|---|
+| `fetch_active_by_report_id(report_id)` | Return active record by UUID |
+| `fetch_by_csi_id(csi_id, active_only, limit)` | List records matching CSI ID |
+| `fetch_by_region(region, active_only, limit)` | List records matching region |
+| `fetch_by_regulation(regulation, active_only, limit)` | List records matching regulation |
+| `fetch_by_composite(filters, active_only, limit)` | Multi-field filter query |
+| `fetch_version_history(report_id)` | All versions (active + inactive) sorted by version |
+| `list_all_active(limit)` | Projection-only list of all active records |
+
+### `export_service`
+
+| Function | Description |
+|---|---|
+| `export_bundle(report_id, output_dir, version?, verify_checksums, force, files?)` | Download selected files from GridFS to disk. `files` set controls which file types to export (`json_config`, `sql_file`, `template`). Checksum verification on every download. |
+
+### `cleanup_service`
+
+| Function | Description |
+|---|---|
+| `purge_old_versions(report_id, keep_versions, dry_run)` | Purge old inactive versions for one record, keeping N most recent |
+| `purge_all_old_versions(keep_versions, dry_run)` | Global sweep across all logical records |
+| `purge_by_age(max_age_days, dry_run)` | Purge all inactive records older than N days |
+
+### `gridfs_service`
+
+| Function | Description |
+|---|---|
+| `upload_to_gridfs(bucket, file_path, original_filename, content_type, extra_metadata?, orphan_tracker?)` | Upload file with retry (3×), checksum metadata, orphan tracking |
+| `download_from_gridfs(bucket, gridfs_id)` | Download bytes + metadata with retry (3×) |
+| `delete_from_gridfs(bucket, gridfs_id)` | Delete a GridFS file by ObjectId |
+| `GridFSOrphanTracker` | Context helper: tracks upload IDs and bulk-deletes them on failure |
+
+### `database` (`DatabaseManager`)
+
+| Method / Property | Description |
+|---|---|
+| `connect()` | Open MongoClient, ping, detect transaction support, create all indexes |
+| `close()` | Close client, release pool |
+| `start_session()` | Open a MongoDB client session (for transactions) |
+| `.metadata_collection` | Returns the configured metadata collection handle |
+| `.fs` | Returns the configured GridFS handle |
+| `.supports_transactions` | `True` if connected to a replica set or mongos |
+| `get_db()` | Module-level singleton: returns connected manager, reconnects on stale TCP |
+| `create_db_manager(uri?, db_name?)` | Create and connect a new `DatabaseManager` |
+| `set_db(instance)` | Override global singleton (testing) |
+| `reset_db()` | Close and clear global singleton |
+
+### `validator`
+
+| Function | Description |
+|---|---|
+| `validate_manifest_structure(manifest, source)` | Ensures root is dict with non-empty `bundles` list |
+| `validate_seed_bundle(bundle, base_dir, index)` | Required field check, token format, file existence, extension allowlist |
+| `validate_json_config(path, index?)` | Valid JSON, root is dict, has non-empty `report.name` |
+| `validate_sql_content(path, index?)` | UTF-8 readable, non-whitespace content |
+
+### `retry`
+
+| Function | Description |
+|---|---|
+| `retry_on_failure(max_retries, base_delay, max_delay, backoff_factor, retryable_exceptions)` | Decorator — retries on `AutoReconnect`, `ConnectionFailure`, `NetworkTimeout`, `ServerSelectionTimeoutError` with exponential backoff |
+
+---
+
+## Custom Exceptions
+
+| Exception | HTTP Status | When raised |
+|---|---|---|
+| `SeederError` | 500 | Base class for all domain errors |
+| `ValidationError` | 400 | Manifest / bundle / file / schema validation failure |
+| `FileNotFoundError` | 400 | Referenced file path does not exist |
+| `DuplicateRecordError` | 409 | Attempt to create a record with an existing composite key |
+| `DatabaseError` | 500 | MongoDB connection or query failure |
+| `GridFSError` | 500 | GridFS upload / download / delete failure |
+| `ChecksumMismatchError` | 500 | Stored vs re-computed checksum mismatch on export |
+| `RecordNotFoundError` | 404 | No record found for given report_id / composite key |
 
 ---
 
@@ -295,40 +412,92 @@ Interactive docs available at `/docs` (Swagger UI) when running locally.
 
 ```
 MongoDB
-├── metadata collection          ← Record metadata, version, checksums, file refs, audit log
-│   ├── report_id: "<UUID>"      ← Internal UUID primary identifier (auto-generated)
+├── metadata collection
+│   ├── report_id               ← UUID v4 (internal, auto-generated)
 │   ├── csi_id, region, regulation
-│   ├── name                     ← from report.name in JSON config
-│   ├── original_files           ← original filenames (json_config, sql_file, template)
-│   ├── file_contents            ← GridFS ObjectIds for each file
-│   ├── checksums                ← SHA-256 per file
-│   ├── file_sizes               ← byte sizes
-│   ├── active: true/false       ← only one active version per composite key
-│   ├── version: 1, 2, 3...
-│   └── audit_log: [...]         ← CREATED / MODIFIED / DEACTIVATED entries
-└── fs (GridFS bucket)           ← Binary file storage (SQL, template, json_config)
+│   ├── name                    ← from report.name in json_config
+│   ├── original_files          ← {json_config, sql_file, template} filenames
+│   ├── file_contents           ← {json_config_id, sql_file_id, template_id} GridFS ObjectIds
+│   ├── checksums               ← SHA-256 per file
+│   ├── file_sizes              ← byte sizes per file
+│   ├── active: true/false      ← only one active version per composite key
+│   ├── version: 1, 2, 3 ...
+│   ├── uploaded_at             ← UTC datetime
+│   └── audit_log: [
+│         { action: "CREATED", reason: "...", timestamp, version },
+│         { action: "MODIFIED", reason: "changed: sql_file", timestamp, version },
+│         { action: "DEACTIVATED", reason: "Superseded by version N", timestamp }
+│       ]
+└── fs (GridFS)                 ← Binary storage (no size limit per file)
+    ├── fs.files                ← GridFS file metadata
+    └── fs.chunks               ← Binary data in 255KB chunks
 ```
 
 **Indexes:**
-- `report_id + active` (partial unique — one active record per report_id)
-- `report_id + version` (version history lookups)
-- `csi_id + regulation + region + original_files.json_config + active` (composite dedup key)
-- Partial unique index: one active record per composite key — enforced at DB level
-- `csi_id`, `region`, `regulation`, `active` (individual filter indexes)
+
+| Index | Type | Purpose |
+|---|---|---|
+| `report_id + active` (partial, active=true) | Unique | One active version per report_id |
+| `report_id + active` | Compound | Fast report_id + active lookups |
+| `report_id + version` | Compound | Version history queries |
+| `csi_id + regulation + region + original_files.json_config` | Compound | Composite key dedup |
+| `csi_id + regulation + region + json_config` (partial, active=true) | Unique | One active per composite key |
+| `csi_id`, `region`, `regulation`, `active` | Single-field | Filter queries |
 
 ---
 
 ## Safety Mechanisms
 
-| Mechanism | What it does |
+| Mechanism | Detail |
 |---|---|
-| **SHA-256 checksums** | Stored at upload time, re-verified on export to detect corruption |
-| **Retry + backoff** | GridFS ops retry 3× with exponential delay (0.5s→1s→2s) on transient errors |
-| **Orphan tracking** | If metadata insert fails after file upload, `GridFSOrphanTracker` deletes orphaned GridFS files |
-| **Transaction support** | On replica sets: deactivate + insert happen atomically. On standalone: orphan tracking fallback |
-| **Delta uploads** | On modify, only files whose checksum changed are re-uploaded — unchanged files reuse existing GridFS IDs |
-| **Pre-validation** | All bundles validated before any DB write — one bad bundle doesn't block others |
-| **Auto-reconnect** | `get_db()` pings the server on every call; stale TCP connections are automatically re-established |
-| **Sentinel guard** | Counter sentinel document excluded from all aggregate, purge, list, and API queries |
-| **Production guard** | `ENVIRONMENT=production` without `API_KEY` → boot fails with a clear error |
-| **Secure logging** | MongoDB URI never logged (only host) — prevents credential leaks in logs |
+| **SHA-256 checksums** | Stored at upload; re-verified on export — detects GridFS corruption |
+| **Delta uploads** | MODIFY re-uploads only changed files; unchanged files reuse existing GridFS ObjectIds |
+| **Transaction support** | On replica sets: old-version deactivation + new-version insert are atomic |
+| **Orphan tracking** | On standalone: `GridFSOrphanTracker` deletes uploaded files if metadata insert fails |
+| **Pre-validation** | All bundles validated before any DB write — one bad bundle never blocks others |
+| **Exponential retry** | GridFS ops retry 3× at 0.5s → 1s → 2s on transient network errors |
+| **Auto-reconnect** | `get_db()` pings server; stale TCP connections are silently replaced |
+| **Sentinel guard** | Counter sentinel doc `_id="report_id_seq"` excluded from all queries, purges, and API results |
+| **Production guard** | `ENVIRONMENT=production` without `API_KEY` → process exits at startup |
+| **Secure URI logging** | Full MongoDB URI never logged; only host is shown |
+| **UUID format validation** | `PATCH /api/records/{report_id}` validates UUID format before DB lookup |
+
+---
+
+## How External Repos Call This Service
+
+### Option A — HTTP API (deployed)
+
+```bash
+# From your regulation repo's CI/CD pipeline:
+SEEDER_BASE_URL=https://seeder.internal \
+SEEDER_API_KEY=your-secret-key \
+  python integration/seed_caller.py manifest seeds/seed.yaml
+
+# Single bundle inline:
+SEEDER_BASE_URL=https://seeder.internal \
+SEEDER_API_KEY=your-secret-key \
+  python integration/seed_caller.py bundle \
+    --csi-id CSI-001 --region APAC --regulation MAS-TRM \
+    --config configs/report.json --sql sql/query.sql
+```
+
+### Option B — CLI (monorepo / local)
+
+```bash
+python -m src.cli seed /path/to/regulation-repo/seeds/seed.yaml
+```
+
+---
+
+## Validation Rules
+
+| Layer | What is checked |
+|---|---|
+| Manifest | Root is a dict, has `bundles` key, list is non-empty |
+| Bundle fields | `csi_id`, `region`, `regulation`, `json_config`, `sql_file` — present, non-empty, `[A-Za-z0-9_\-.]` only |
+| File existence | All referenced files exist, are regular files, and are non-empty |
+| SQL extension | Must be `.sql` |
+| Template extension | `.txt`, `.html`, `.jinja`, `.j2`, `.tmpl`, `.xml`, `.csv` |
+| JSON config | Valid JSON, root object, has `report.name` (non-empty string) |
+| SQL content | Valid UTF-8, contains non-whitespace content |
