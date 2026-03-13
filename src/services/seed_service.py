@@ -716,7 +716,7 @@ def _modify_record(
             template_original = existing_originals.get("template")
             if template_path:
                 # template provided but checksum matched
-                pass
+                pass  # template provided but checksum matched — existing refs already set above
             else:
                 # No template in this bundle run — preserve existing
                 template_checksum = existing_checksums.get("template")
