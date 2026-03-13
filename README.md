@@ -1,5 +1,10 @@
 # MongoDB Document Seeder
 
+> 📊 **Architecture diagrams for all flows:** see [`DIAGRAMS.md`](./DIAGRAMS.md)
+>
+> Includes: System Architecture · Seeding Flow · Composite Key Routing · GridFS Sequence · Export · API Lifecycle · Cleanup · DB State Machine · Validation Pipeline · End-to-End Data Flow
+
+
 A **standalone seeder engine** for regulatory document bundles. Regulation repos call this service (via HTTP or CLI) to store, version, and retrieve their config files (JSON configs, SQL queries, templates) in MongoDB — with full audit trails, SHA-256 checksums, and append-only versioning.
 
 ---
