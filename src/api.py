@@ -7,7 +7,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query, Depends, Security, Request
@@ -151,7 +151,7 @@ async def list_records(
     skip: int = Query(0, ge=0),
 ):
     db = get_db()
-    query: dict[str, Any] = {"_id": {"$type": "objectId"}}   # exclude counter sentinel doc
+    query: Dict[str, Any] = {"_id": {"$type": "objectId"}}   # exclude counter sentinel doc
     if active_only:
         query["active"] = True
     if region:
@@ -280,7 +280,7 @@ class SeedManifestRequest(BaseModel):
     Payload for seeding multiple bundles at once (same as seed.yaml but as JSON).
     Each item is a SeedBundleRequest.
     """
-    bundles: list[SeedBundleRequest]
+    bundles: List[SeedBundleRequest]
 
 
 class ModifyBundleRequest(BaseModel):

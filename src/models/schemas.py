@@ -1,7 +1,7 @@
 """Pydantic models for data validation and serialization."""
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -50,7 +50,7 @@ class MetadataDocument(BaseModel):
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     active: bool = True
     version: int = Field(default=1, ge=1)
-    audit_log: list[AuditEntry] = Field(default_factory=list)
+    audit_log: List[AuditEntry] = Field(default_factory=list)
 
     class Config:
         arbitrary_types_allowed = True

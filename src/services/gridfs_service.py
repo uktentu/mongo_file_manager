@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Tuple, Union
 
 from bson import ObjectId
 from gridfs import GridFS
@@ -18,7 +18,7 @@ class GridFSOrphanTracker:
     """Tracks GridFS uploads and config inserts for cleanup if the parent operation fails."""
 
     def __init__(self) -> None:
-        self._pending_gridfs: list[tuple[GridFS, ObjectId]] = []
+        self._pending_gridfs: List[Tuple[GridFS, ObjectId]] = []
 
     def track(self, bucket: GridFS, gridfs_id: ObjectId) -> None:
         self._pending_gridfs.append((bucket, gridfs_id))
@@ -91,7 +91,7 @@ def upload_to_gridfs(
 
 
 @retry_on_failure(max_retries=3)
-def download_from_gridfs(bucket: GridFS, gridfs_id: ObjectId) -> tuple[bytes, dict]:
+def download_from_gridfs(bucket: GridFS, gridfs_id: ObjectId) -> Tuple[bytes, dict]:
     try:
         if not bucket.exists(gridfs_id):
             raise GridFSError(f"GridFS file not found: {gridfs_id}")

@@ -1,7 +1,7 @@
 """Cleanup service — retention policy and version purging."""
 
 import logging
-from typing import Any
+from typing import Any, Dict
 from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
@@ -64,7 +64,7 @@ def purge_old_versions(report_id: str, keep_versions: int = 3, dry_run: bool = F
     to_keep_inactive = non_active[:slots_remaining]
     to_purge = non_active[slots_remaining:]
 
-    result: dict[str, Any] = {
+    result: Dict[str, Any] = {
         "purged": 0,
         "kept": len(protected) + len(to_keep_inactive),
         "errors": [],
@@ -106,7 +106,7 @@ def purge_all_old_versions(keep_versions: int = 3, dry_run: bool = False) -> dic
     ]
     composite_keys = [doc["_id"] for doc in db.metadata_collection.aggregate(pipeline)]
 
-    aggregate: dict[str, Any] = {
+    aggregate: Dict[str, Any] = {
         "total_purged": 0,
         "records_processed": len(composite_keys),
         "errors": [],
@@ -159,7 +159,7 @@ def purge_by_age(max_age_days: int = 90, dry_run: bool = False) -> dict:
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
 
     old_records = list(db.metadata_collection.find({"active": False, "uploaded_at": {"$lt": cutoff}}))
-    result: dict[str, Any] = {"purged": 0, "errors": [], "dry_run": dry_run}
+    result: Dict[str, Any] = {"purged": 0, "errors": [], "dry_run": dry_run}
 
     if not old_records:
         logger.info("cleanup.age_noop max_age_days=%d", max_age_days)

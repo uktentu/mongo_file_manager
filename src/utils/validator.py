@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Dict, List, Union
 
 from src.errors.exceptions import ValidationError
 
@@ -32,7 +32,7 @@ _TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]+$")
 # Manifest-level
 # ---------------------------------------------------------------------------
 
-def validate_manifest_structure(manifest: Any, source: str = "manifest") -> list[dict]:
+def validate_manifest_structure(manifest: Any, source: str = "manifest") -> List[dict]:
     """
     Validate top-level YAML manifest structure.
     Returns the bundles list on success; raises ValidationError otherwise.
@@ -158,7 +158,7 @@ def validate_file_exists(file_path: Union[str, Path], label: str = "File", index
     return path.resolve()
 
 
-def validate_json_config(config_path: Union[str, Path], index: int = 0) -> dict[str, Any]:
+def validate_json_config(config_path: Union[str, Path], index: int = 0) -> Dict[str, Any]:
     """Validate JSON config file: existence, extension, parseable JSON, required fields."""
     path = Path(config_path)
 

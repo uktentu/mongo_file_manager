@@ -17,7 +17,7 @@ import logging
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
 
@@ -58,7 +58,7 @@ def _detect_content_type(file_path: str) -> str:
 # Public: bulk seeding from manifest
 # ---------------------------------------------------------------------------
 
-def seed_from_manifest(manifest_path: Union[str, Path]) -> dict[str, Any]:
+def seed_from_manifest(manifest_path: Union[str, Path]) -> Dict[str, Any]:
     """
     Load a YAML manifest and seed all bundles.
 
@@ -99,8 +99,8 @@ def seed_from_manifest(manifest_path: Union[str, Path]) -> dict[str, Any]:
 
     # ── Step 3: Pre-validate ALL bundle fields & files ───────────
     logger.info("seed.step2  Pre-validating all bundles before database operations")
-    validated_bundles: list[tuple[int, dict, dict]] = []   # (original_index, resolved, config)
-    pre_errors: list[str] = []
+    validated_bundles: List[Tuple[int, dict, dict]] = []   # (original_index, resolved, config)
+    pre_errors: List[str] = []
 
     for i, raw_bundle in enumerate(raw_bundles):
         label = raw_bundle.get("csi_id", f"bundle-{i}") if isinstance(raw_bundle, dict) else f"bundle-{i}"
@@ -127,7 +127,7 @@ def seed_from_manifest(manifest_path: Union[str, Path]) -> dict[str, Any]:
     # ── Step 4: Process each validated bundle against DB ─────────
     logger.info("seed.step3  Processing %d validated bundle(s)", len(validated_bundles))
 
-    results: dict[str, Any] = {
+    results: Dict[str, Any] = {
         "created": 0, "updated": 0, "skipped": 0, "failed": 0,
         "total": len(raw_bundles),
         "details": [],
@@ -151,7 +151,7 @@ def seed_from_manifest(manifest_path: Union[str, Path]) -> dict[str, Any]:
         label = bundle.get("csi_id", f"bundle-{i}")
         logger.info("seed.step3  ── Bundle [%d/%d] '%s' ──", idx + 1, len(validated_bundles), label)
 
-        detail: dict[str, Any] = {
+        detail: Dict[str, Any] = {
             "index": i, "label": label, "status": "failed",
             "report_id": None, "version": None,
             "reason": "", "error": None,
@@ -197,7 +197,7 @@ def seed_from_manifest(manifest_path: Union[str, Path]) -> dict[str, Any]:
 # Internal: single bundle dispatcher
 # ---------------------------------------------------------------------------
 
-def _process_bundle(bundle: dict, config: dict) -> tuple[str, Optional[str], Optional[int], str]:
+def _process_bundle(bundle: dict, config: dict) -> Tuple[str, Optional[str], Optional[int], str]:
     """
     Determine whether to create/skip/modify a bundle.
     Returns (status, report_id, version, reason).
@@ -650,7 +650,7 @@ def _modify_record(
     existing_sizes = existing.get("file_sizes", {})
     existing_originals = existing.get("original_files", {})
 
-    changed_parts: list[str] = []
+    changed_parts: List[str] = []
 
     try:
         # ── json_config ─────────────────────────────────────────────

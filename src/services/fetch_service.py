@@ -1,7 +1,7 @@
 """Fetch service — query operations for metadata retrieval."""
 
 import logging
-from typing import Any
+from typing import Any, Dict, List
 
 from src.config.database import get_db
 from src.errors.exceptions import RecordNotFoundError
@@ -20,9 +20,9 @@ def fetch_active_by_report_id(report_id: str) -> dict:
     return record
 
 
-def fetch_by_csi_id(csi_id: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
+def fetch_by_csi_id(csi_id: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> List[dict]:
     db = get_db()
-    query: dict[str, Any] = {"csi_id": csi_id}
+    query: Dict[str, Any] = {"csi_id": csi_id}
     if active_only:
         query["active"] = True
     results = list(db.metadata_collection.find(query).limit(limit))
@@ -30,9 +30,9 @@ def fetch_by_csi_id(csi_id: str, active_only: bool = True, limit: int = DEFAULT_
     return results
 
 
-def fetch_by_region(region: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
+def fetch_by_region(region: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> List[dict]:
     db = get_db()
-    query: dict[str, Any] = {"region": region}
+    query: Dict[str, Any] = {"region": region}
     if active_only:
         query["active"] = True
     results = list(db.metadata_collection.find(query).limit(limit))
@@ -40,9 +40,9 @@ def fetch_by_region(region: str, active_only: bool = True, limit: int = DEFAULT_
     return results
 
 
-def fetch_by_regulation(regulation: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
+def fetch_by_regulation(regulation: str, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> List[dict]:
     db = get_db()
-    query: dict[str, Any] = {"regulation": regulation}
+    query: Dict[str, Any] = {"regulation": regulation}
     if active_only:
         query["active"] = True
     results = list(db.metadata_collection.find(query).limit(limit))
@@ -50,7 +50,7 @@ def fetch_by_regulation(regulation: str, active_only: bool = True, limit: int = 
     return results
 
 
-def fetch_by_composite(filters: dict, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> list[dict]:
+def fetch_by_composite(filters: dict, active_only: bool = True, limit: int = DEFAULT_LIMIT) -> List[dict]:
     db = get_db()
     query = {}
     for key in ["csi_id", "region", "regulation", "report_id"]:
@@ -63,7 +63,7 @@ def fetch_by_composite(filters: dict, active_only: bool = True, limit: int = DEF
     return results
 
 
-def list_all_active(limit: int = DEFAULT_LIMIT) -> list[dict]:
+def list_all_active(limit: int = DEFAULT_LIMIT) -> List[dict]:
     db = get_db()
     results = list(
         db.metadata_collection.find(
@@ -78,7 +78,7 @@ def list_all_active(limit: int = DEFAULT_LIMIT) -> list[dict]:
     return results
 
 
-def fetch_version_history(report_id: str) -> list[dict]:
+def fetch_version_history(report_id: str) -> List[dict]:
     """Return all versions (active + inactive) for the logical record identified by report_id."""
     db = get_db()
     # Anchor on the record with this report_id to get the composite business key

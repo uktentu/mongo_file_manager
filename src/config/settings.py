@@ -30,6 +30,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import List
 
 from dotenv import load_dotenv
 
@@ -148,7 +149,7 @@ class Settings:
     # ── Validation ────────────────────────────────────────────────────────────
 
     def _validate_required(self) -> None:
-        errors: list[str] = []
+        errors: List[str] = []
 
         if not self.mongo_uri.strip():
             errors.append("MONGO_URI must not be empty")
