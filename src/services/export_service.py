@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Set, Union
 
 from bson import ObjectId
 
@@ -22,7 +22,7 @@ def export_bundle(
     version: Optional[int] = None,
     verify_checksums: bool = True,
     force: bool = False,
-    files: Optional[set[str]] = None,
+    files: Optional[Set[str]] = None,
 ) -> dict:
     """
     Export files from a stored bundle to disk.
