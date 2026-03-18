@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 from src.errors.exceptions import ValidationError
 
@@ -141,7 +141,7 @@ def validate_seed_bundle(bundle: Any, base_dir: Path, index: int = 0) -> dict:
 # File-level validators
 # ---------------------------------------------------------------------------
 
-def validate_file_exists(file_path: str | Path, label: str = "File", index: int = 0) -> Path:
+def validate_file_exists(file_path: Union[str, Path], label: str = "File", index: int = 0) -> Path:
     path = Path(file_path)
     if not path.exists():
         raise ValidationError(
@@ -158,7 +158,7 @@ def validate_file_exists(file_path: str | Path, label: str = "File", index: int 
     return path.resolve()
 
 
-def validate_json_config(config_path: str | Path, index: int = 0) -> dict[str, Any]:
+def validate_json_config(config_path: Union[str, Path], index: int = 0) -> dict[str, Any]:
     """Validate JSON config file: existence, extension, parseable JSON, required fields."""
     path = Path(config_path)
 
@@ -209,7 +209,7 @@ def validate_json_config(config_path: str | Path, index: int = 0) -> dict[str, A
     return config
 
 
-def validate_sql_content(sql_path: str | Path, index: int = 0) -> None:
+def validate_sql_content(sql_path: Union[str, Path], index: int = 0) -> None:
     """Validate SQL file: non-empty, UTF-8 readable, contains some non-whitespace content."""
     path = Path(sql_path)
     try:

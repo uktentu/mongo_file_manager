@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from bson import ObjectId
 from gridfs import GridFS
@@ -46,7 +46,7 @@ class GridFSOrphanTracker:
 @retry_on_failure(max_retries=3)
 def upload_to_gridfs(
     bucket: GridFS,
-    file_path: str | Path,
+    file_path: Union[str, Path],
     original_filename: str,
     content_type: str = "application/octet-stream",
     extra_metadata: Optional[dict] = None,

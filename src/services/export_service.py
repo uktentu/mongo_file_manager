@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from bson import ObjectId
 
@@ -18,7 +18,7 @@ VALID_FILE_KEYS = {"json_config", "sql_file", "template"}
 
 def export_bundle(
     report_id: str,
-    output_dir: str | Path,
+    output_dir: Union[str, Path],
     version: Optional[int] = None,
     verify_checksums: bool = True,
     force: bool = False,

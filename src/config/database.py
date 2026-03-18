@@ -11,21 +11,22 @@ from gridfs import GridFS
 
 from src.config.settings import get_settings
 from src.errors.exceptions import DatabaseError
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
 
-    def __init__(self, uri: str | None = None, db_name: str | None = None):
+    def __init__(self, uri: Optional[str] = None, db_name: Optional[str] = None):
         settings = get_settings()
         self._uri = uri or settings.mongo_uri
         self._db_name = db_name or settings.mongo_db_name
         self._col_metadata = settings.mongo_metadata_collection
         self._bucket_name = settings.mongo_gridfs_bucket
-        self._client: MongoClient | None = None
+        self._client: Optional[MongoClient] = None
         self._db = None
-        self._fs: GridFS | None = None
+        self._fs: Optional[GridFS] = None
         self._supports_transactions: bool = False
 
     def connect(self):
@@ -184,10 +185,10 @@ class DatabaseManager:
         return self.client.start_session()
 
 
-_default_instance: DatabaseManager | None = None
+_default_instance: Optional["DatabaseManager"] = None
 
 
-def create_db_manager(uri: str | None = None, db_name: str | None = None) -> DatabaseManager:
+def create_db_manager(uri: Optional[str] = None, db_name: Optional[str] = None) -> DatabaseManager:
     mgr = DatabaseManager(uri=uri, db_name=db_name)
     mgr.connect()
     return mgr

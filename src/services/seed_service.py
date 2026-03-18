@@ -17,7 +17,7 @@ import logging
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import yaml
 
@@ -58,7 +58,7 @@ def _detect_content_type(file_path: str) -> str:
 # Public: bulk seeding from manifest
 # ---------------------------------------------------------------------------
 
-def seed_from_manifest(manifest_path: str | Path) -> dict[str, Any]:
+def seed_from_manifest(manifest_path: Union[str, Path]) -> dict[str, Any]:
     """
     Load a YAML manifest and seed all bundles.
 
@@ -69,8 +69,8 @@ def seed_from_manifest(manifest_path: str | Path) -> dict[str, Any]:
       "details": [
         {
           "index": int, "label": str, "status": str,
-          "report_id": str | None, "version": int | None,
-          "reason": str, "error": str | None
+          "report_id": Optional[str], "version": Optional[int],
+          "reason": str, "error": Optional[str]
         }, ...
       ],
       "errors": [str, ...]          # compact error list for quick display
@@ -531,7 +531,7 @@ def modify_record_by_id(
 # Internal: create
 # ---------------------------------------------------------------------------
 
-def _create_record(bundle: dict, config: dict, precomputed_checksums: dict | None = None) -> str:
+def _create_record(bundle: dict, config: dict, precomputed_checksums: Optional[dict] = None) -> str:
     db = get_db()
     tracker = GridFSOrphanTracker()
 
@@ -627,7 +627,7 @@ def _modify_record(
     bundle: dict,
     config: dict,
     existing: dict,
-    precomputed_checksums: dict | None = None,
+    precomputed_checksums: Optional[dict] = None,
 ) -> int:
     db = get_db()
     tracker = GridFSOrphanTracker()

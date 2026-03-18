@@ -2,13 +2,14 @@
 
 import hashlib
 from pathlib import Path
+from typing import Union
 
 from src.errors.exceptions import FileNotFoundError as SeederFileNotFoundError
 
 CHUNK_SIZE = 8192
 
 
-def compute_file_checksum(file_path: str | Path) -> str:
+def compute_file_checksum(file_path: Union[str, Path]) -> str:
     path = Path(file_path)
     if not path.exists():
         raise SeederFileNotFoundError(f"File not found for checksum: {path}")
@@ -28,6 +29,6 @@ def compute_bytes_checksum(data: bytes) -> str:
     return f"sha256:{sha256.hexdigest()}"
 
 
-def verify_checksum(file_path: str | Path, expected_checksum: str) -> bool:
+def verify_checksum(file_path: Union[str, Path], expected_checksum: str) -> bool:
     actual = compute_file_checksum(file_path)
     return actual == expected_checksum
