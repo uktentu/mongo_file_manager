@@ -70,7 +70,7 @@ def list_all_active(limit: int = DEFAULT_LIMIT) -> List[dict]:
             {"active": True},
             {
                 "report_id": 1, "csi_id": 1, "region": 1, "regulation": 1,
-                "name": 1, "version": 1, "uploaded_at": 1,
+                "name": 1, "version": 1, "mongoInsertedTs": 1, "mongoUpdatedTs": 1,
             },
         ).limit(limit)
     )

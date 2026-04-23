@@ -236,7 +236,7 @@ def _serialize_value(value):
     if isinstance(value, ObjectId):
         return str(value)
     if isinstance(value, datetime):
-        return value.isoformat()
+        return value.strftime("%Y-%m-%dT%H:%M:%S.%f")
     if isinstance(value, dict):
         return _serialize_record(value)
     if isinstance(value, list):
@@ -621,16 +621,7 @@ async def seed_manifest(req: SeedManifestRequest):
 
 @app.patch("/api/records/{report_id}", dependencies=[Depends(verify_api_key)])
 async def modify_record_api(report_id: str, req: ModifyBundleRequest):
-    """Modify a specific record by internal UUID report_id."""
-    import uuid as _uuid
-    try:
-        _uuid.UUID(report_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid report_id format: '{report_id}' must be a UUID",
-        )
-
+    """Modify a specific record by composite report_id."""
     from src.services.seed_service import modify_record_by_id
 
     if not any([req.json_config_content, req.sql_file_content, req.template_content]):

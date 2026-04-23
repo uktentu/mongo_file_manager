@@ -157,8 +157,9 @@ def purge_all_old_versions(keep_versions: int = 3, dry_run: bool = False) -> dic
 def purge_by_age(max_age_days: int = 90, dry_run: bool = False) -> dict:
     db = get_db()
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%S.%f")
 
-    old_records = list(db.metadata_collection.find({"active": False, "uploaded_at": {"$lt": cutoff}}))
+    old_records = list(db.metadata_collection.find({"active": False, "mongoInsertedTs": {"$lt": cutoff_str}}))
     result: Dict[str, Any] = {"purged": 0, "errors": [], "dry_run": dry_run}
 
     if not old_records:

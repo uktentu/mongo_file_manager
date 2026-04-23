@@ -6,9 +6,18 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+# Standard timestamp format used everywhere in this project
+TS_FORMAT = "%Y-%m-%dT%H:%M:%S.%f"
+
+
+def _now_formatted() -> str:
+    """Return current UTC time as string in project standard format."""
+    return datetime.now(timezone.utc).strftime(TS_FORMAT)
+
+
 class AuditEntry(BaseModel):
     action: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: str = Field(default_factory=_now_formatted)
     details: str = ""
 
 
@@ -47,7 +56,8 @@ class MetadataDocument(BaseModel):
     file_contents: FileContents
     checksums: Checksums
     file_sizes: FileSizes
-    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    mongoInsertedTs: str = Field(default_factory=_now_formatted)
+    mongoUpdatedTs: str = Field(default_factory=_now_formatted)
     active: bool = True
     version: int = Field(default=1, ge=1)
     audit_log: List[AuditEntry] = Field(default_factory=list)
@@ -57,7 +67,6 @@ class MetadataDocument(BaseModel):
 
     def to_mongo_dict(self) -> dict:
         data = self.model_dump()
-        data["uploaded_at"] = self.uploaded_at
         return data
 
 

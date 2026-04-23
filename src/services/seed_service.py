@@ -35,6 +35,7 @@ from src.models.schemas import (
     FileSizes,
     MetadataDocument,
     OriginalFiles,
+    _now_formatted,
 )
 from src.services.audit_service import create_audit_entry
 from src.services.gridfs_service import GridFSOrphanTracker, upload_to_gridfs
@@ -250,7 +251,7 @@ def _process_bundle(bundle: dict, config: dict) -> Tuple[str, Optional[str], Opt
             "seed.create  No existing record — creating for csi_id=%s regulation=%s region=%s",
             bundle["csi_id"], bundle["regulation"], bundle["region"],
         )
-        report_id = _create_record(bundle, config, precomputed_checksums=precomputed)
+        report_id = _create_record(bundle, config, precomputed_checksums=precomputed, json_config_filename=json_config_filename)
         return "created", report_id, 1, "new record"
 
     # ── Existing record found — check if anything changed ────────
@@ -323,7 +324,7 @@ def create_single_record(
         "json_config": json_config_path, "sql_file": sql_file_path,
         "template": template_path,
     }
-    report_id = _create_record(bundle, config)
+    report_id = _create_record(bundle, config, json_config_filename=json_config_filename)
     logger.info("seed.create_single  DONE report_id=%s", report_id)
     return report_id
 
@@ -487,7 +488,7 @@ def modify_record_by_id(
                 report_id=report_id,
                 csi_id=existing["csi_id"], region=existing["region"],
                 regulation=existing["regulation"],
-                name=config["report"]["name"] if config else existing["name"],
+                name=new_json_original,
                 original_files=OriginalFiles(
                     json_config=new_json_original,
                     template=new_template_original,
@@ -505,7 +506,8 @@ def modify_record_by_id(
                     json_config=new_json_size,
                     template=new_template_size, sql_file=new_sql_size,
                 ),
-                uploaded_at=datetime.now(timezone.utc),
+                mongoInsertedTs=_now_formatted(),
+                mongoUpdatedTs=_now_formatted(),
                 active=True, version=new_version,
                 audit_log=[AuditEntry(**create_audit_entry(
                     "MODIFIED",
@@ -531,7 +533,7 @@ def modify_record_by_id(
 # Internal: create
 # ---------------------------------------------------------------------------
 
-def _create_record(bundle: dict, config: dict, precomputed_checksums: Optional[dict] = None) -> str:
+def _create_record(bundle: dict, config: dict, precomputed_checksums: Optional[dict] = None, json_config_filename: Optional[str] = None) -> str:
     db = get_db()
     tracker = GridFSOrphanTracker()
 
@@ -547,7 +549,13 @@ def _create_record(bundle: dict, config: dict, precomputed_checksums: Optional[d
     )
 
     try:
-        report_id = generate_report_id(db)
+        jc_name = json_config_filename or json_config_path.name
+        report_id = generate_report_id(
+            csi_id=bundle["csi_id"],
+            region=bundle["region"],
+            regulation=bundle["regulation"],
+            json_config_filename=jc_name,
+        )
         logger.debug("seed.create  report_id=%s — uploading files to GridFS", report_id)
 
         json_id = upload_to_gridfs(
@@ -579,7 +587,7 @@ def _create_record(bundle: dict, config: dict, precomputed_checksums: Optional[d
             report_id=report_id,
             csi_id=bundle["csi_id"], region=bundle["region"],
             regulation=bundle["regulation"],
-            name=config["report"]["name"],
+            name=json_config_path.name,
             original_files=OriginalFiles(
                 json_config=json_config_path.name,
                 template=template_path.name if template_path else None,
@@ -597,7 +605,8 @@ def _create_record(bundle: dict, config: dict, precomputed_checksums: Optional[d
                 template=template_path.stat().st_size if template_path else None,
                 sql_file=sql_file_path.stat().st_size,
             ),
-            uploaded_at=datetime.now(timezone.utc),
+            mongoInsertedTs=_now_formatted(),
+            mongoUpdatedTs=_now_formatted(),
             active=True, version=1,
             audit_log=[AuditEntry(**create_audit_entry("CREATED", "Initial seed from manifest"))],
         )
@@ -743,7 +752,7 @@ def _modify_record(
                 report_id=report_id,
                 csi_id=bundle["csi_id"], region=bundle["region"],
                 regulation=bundle["regulation"],
-                name=config["report"]["name"],
+                name=json_original,
                 original_files=OriginalFiles(
                     json_config=json_original,
                     template=template_original,
@@ -763,7 +772,8 @@ def _modify_record(
                     template=template_size,
                     sql_file=sql_size,
                 ),
-                uploaded_at=datetime.now(timezone.utc),
+                mongoInsertedTs=_now_formatted(),
+                mongoUpdatedTs=_now_formatted(),
                 active=True, version=new_version,
                 audit_log=[AuditEntry(**create_audit_entry(
                     "MODIFIED",
