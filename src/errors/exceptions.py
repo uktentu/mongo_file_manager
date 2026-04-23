@@ -14,8 +14,17 @@ class ValidationError(SeederError):
     pass
 
 
-class FileNotFoundError(SeederError):
+class FileNotFoundError_(SeederError):
+    """Raised when a required file is not found.
+
+    Named with trailing underscore to avoid shadowing Python's built-in
+    FileNotFoundError.
+    """
     pass
+
+
+# Backward-compatible alias
+FileNotFoundError = FileNotFoundError_  # noqa: A001
 
 
 class DuplicateRecordError(SeederError):

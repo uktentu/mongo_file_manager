@@ -32,13 +32,17 @@ class DatabaseManager:
     def connect(self):
         settings = get_settings()
         try:
-            self._client = MongoClient(
-                self._uri,
+            connect_kwargs = dict(
                 maxPoolSize=settings.mongo_max_pool_size,
                 serverSelectionTimeoutMS=settings.mongo_server_timeout_ms,
                 connectTimeoutMS=settings.mongo_connect_timeout_ms,
                 retryWrites=True,
             )
+            # Enforce TLS in production (Atlas URIs use it by default via +srv)
+            if settings.is_production and "localhost" not in self._uri and "127.0.0.1" not in self._uri:
+                connect_kwargs["tls"] = True
+
+            self._client = MongoClient(self._uri, **connect_kwargs)
             self._client.admin.command("ping")
             self._db = self._client[self._db_name]
 

@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from src.errors.exceptions import ValidationError
 
@@ -95,19 +95,19 @@ def validate_seed_bundle(bundle: Any, base_dir: Path, index: int = 0) -> dict:
     _validate_token_field(bundle["region"], "region", index)
     _validate_token_field(bundle["regulation"], "regulation", index)
 
-    # --- Resolve and validate file paths ---
+    # --- Resolve and validate file paths (with traversal protection) ---
     resolved = dict(bundle)
 
     resolved["json_config"] = str(
-        validate_file_exists(base_dir / bundle["json_config"], "JSON config", index=index)
+        validate_file_exists(base_dir / bundle["json_config"], "JSON config", index=index, base_dir=base_dir)
     )
     resolved["sql_file"] = str(
-        validate_file_exists(base_dir / bundle["sql_file"], "SQL file", index=index)
+        validate_file_exists(base_dir / bundle["sql_file"], "SQL file", index=index, base_dir=base_dir)
     )
 
     if bundle.get("template"):
         resolved["template"] = str(
-            validate_file_exists(base_dir / bundle["template"], "Template", index=index)
+            validate_file_exists(base_dir / bundle["template"], "Template", index=index, base_dir=base_dir)
         )
     else:
         resolved["template"] = None
@@ -141,8 +141,25 @@ def validate_seed_bundle(bundle: Any, base_dir: Path, index: int = 0) -> dict:
 # File-level validators
 # ---------------------------------------------------------------------------
 
-def validate_file_exists(file_path: Union[str, Path], label: str = "File", index: int = 0) -> Path:
-    path = Path(file_path)
+def validate_file_exists(
+    file_path: Union[str, Path],
+    label: str = "File",
+    index: int = 0,
+    base_dir: Optional[Path] = None,
+) -> Path:
+    path = Path(file_path).resolve()
+
+    # Path traversal protection: ensure resolved path stays within base_dir
+    if base_dir is not None:
+        resolved_base = base_dir.resolve()
+        try:
+            path.relative_to(resolved_base)
+        except ValueError:
+            raise ValidationError(
+                f"Bundle #{index}: {label} path escapes the base directory "
+                f"(possible path traversal): {file_path}"
+            )
+
     if not path.exists():
         raise ValidationError(
             f"Bundle #{index}: {label} not found: {path}"
@@ -155,7 +172,7 @@ def validate_file_exists(file_path: Union[str, Path], label: str = "File", index
         raise ValidationError(
             f"Bundle #{index}: {label} is empty (0 bytes): {path}"
         )
-    return path.resolve()
+    return path
 
 
 def validate_json_config(config_path: Union[str, Path], index: int = 0) -> Dict[str, Any]:

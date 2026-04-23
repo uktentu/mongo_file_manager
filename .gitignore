@@ -1,12 +1,34 @@
+# Environment & secrets
 .env
+
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
+*.pyo
 *.egg-info/
 dist/
 build/
+
+# Virtual environments
 .venv/
 venv/
+venv39/
+
+# IDE
 .mypy_cache/
+.pytest_cache/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Output
 *.zip
 exported/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
