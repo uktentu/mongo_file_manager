@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MongoDB Document Seeder — Architecture & Design</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface2: #1c2128;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --accent2: #3fb950;
+  --accent3: #f78166;
+  --accent4: #d2a8ff;
+  --accent5: #ffa657;
+  --accent6: #79c0ff;
+  --glow: rgba(88,166,255,0.15);
+  --nav-w: 260px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:15px;line-height:1.7;display:flex;min-height:100vh}
+
+/* ── NAV ── */
+nav{position:fixed;top:0;left:0;width:var(--nav-w);height:100vh;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:100;padding:24px 0}
+nav .logo{padding:0 20px 24px;border-bottom:1px solid var(--border)}
+nav .logo h2{font-size:13px;font-weight:700;color:var(--accent);letter-spacing:.08em;text-transform:uppercase}
+nav .logo p{font-size:11px;color:var(--muted);margin-top:3px}
+nav ul{list-style:none;padding:16px 0}
+nav ul li{margin:1px 0}
+nav ul li a{display:flex;align-items:center;gap:10px;padding:8px 20px;font-size:12.5px;color:var(--muted);text-decoration:none;border-radius:6px;margin:0 8px;transition:all .2s}
+nav ul li a:hover,nav ul li a.active{background:var(--glow);color:var(--accent)}
+nav ul li a .dot{width:6px;height:6px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .2s}
+nav ul li a:hover .dot,nav ul li a.active .dot{background:var(--accent)}
+nav .section-label{padding:16px 20px 6px;font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+
+/* ── MAIN ── */
+main{margin-left:var(--nav-w);flex:1;max-width:1100px;padding:60px 48px}
+
+/* ── HERO ── */
+.hero{padding:80px 0 60px;text-align:center;position:relative}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 40% at 50% 0%,rgba(88,166,255,.12),transparent);pointer-events:none}
+.hero .badge{display:inline-flex;align-items:center;gap:8px;background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.3);color:var(--accent);padding:6px 16px;border-radius:100px;font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;margin-bottom:28px}
+.hero h1{font-size:clamp(32px,5vw,52px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin-bottom:20px}
+.hero h1 span{background:linear-gradient(135deg,var(--accent),var(--accent4));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{font-size:17px;color:var(--muted);max-width:620px;margin:0 auto 40px}
+.stats{display:flex;justify-content:center;gap:40px;flex-wrap:wrap}
+.stat{text-align:center}
+.stat .num{font-size:28px;font-weight:800;color:var(--accent)}
+.stat .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
+
+/* ── SECTIONS ── */
+section{padding:80px 0;border-top:1px solid var(--border)}
+section:first-of-type{border-top:none}
+.section-tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;padding:4px 12px;border-radius:4px}
+.tag-blue{background:rgba(88,166,255,.15);color:var(--accent)}
+.tag-green{background:rgba(63,185,80,.15);color:var(--accent2)}
+.tag-red{background:rgba(247,129,102,.15);color:var(--accent3)}
+.tag-purple{background:rgba(210,168,255,.15);color:var(--accent4)}
+.tag-orange{background:rgba(255,166,87,.15);color:var(--accent5)}
+.tag-teal{background:rgba(121,192,255,.15);color:var(--accent6)}
+h2{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-bottom:8px}
+h3{font-size:18px;font-weight:700;margin:32px 0 12px;color:var(--text)}
+.lead{font-size:16px;color:var(--muted);max-width:680px;margin-bottom:36px}
+
+/* ── WHY BOX ── */
+.why{background:linear-gradient(135deg,rgba(88,166,255,.07),rgba(210,168,255,.05));border:1px solid rgba(88,166,255,.2);border-radius:12px;padding:24px 28px;margin:28px 0;position:relative}
+.why::before{content:'⚡ WHY';position:absolute;top:-11px;left:20px;background:var(--bg);padding:0 8px;font-size:10px;font-weight:800;color:var(--accent);letter-spacing:.12em}
+.why p{color:var(--muted);font-size:14px;line-height:1.75}
+.why ul{color:var(--muted);font-size:14px;padding-left:20px;line-height:2}
+.why strong{color:var(--text)}
+
+/* ── DIAGRAM ── */
+.diagram-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;margin:28px 0;overflow:auto}
+.diagram-wrap .mermaid{min-width:500px}
+
+/* ── CARD GRID ── */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:28px 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;transition:border-color .2s,transform .2s}
+.card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.card .icon{font-size:28px;margin-bottom:12px}
+.card h4{font-size:14px;font-weight:700;margin-bottom:8px;color:var(--text)}
+.card p{font-size:13px;color:var(--muted);line-height:1.65}
+.card .tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;margin-top:10px;letter-spacing:.06em}
+
+/* ── TABLE ── */
+.table-wrap{overflow:auto;margin:24px 0;border-radius:12px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--surface2);padding:12px 16px;text-align:left;font-weight:600;font-size:12px;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border)}
+td{padding:11px 16px;border-bottom:1px solid rgba(48,54,61,.5);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(88,166,255,.04)}
+code{font-family:'JetBrains Mono',monospace;font-size:12px;background:rgba(110,118,129,.1);padding:2px 7px;border-radius:4px;color:var(--accent6)}
+
+/* ── FLOW STEPS ── */
+.flow-steps{display:flex;flex-direction:column;gap:0;margin:28px 0}
+.flow-step{display:flex;gap:20px;position:relative;padding-bottom:8px}
+.flow-step::before{content:'';position:absolute;left:19px;top:44px;bottom:0;width:2px;background:var(--border)}
+.flow-step:last-child::before{display:none}
+.step-num{width:40px;height:40px;border-radius:50%;background:var(--surface2);border:2px solid var(--accent);color:var(--accent);font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;z-index:1}
+.step-body{padding:8px 0 28px}
+.step-body h4{font-size:14px;font-weight:700;margin-bottom:6px}
+.step-body p{font-size:13.5px;color:var(--muted);line-height:1.7}
+.step-body code{font-family:'JetBrains Mono',monospace;font-size:12px;background:rgba(110,118,129,.1);padding:2px 7px;border-radius:4px;color:var(--accent6)}
+
+/* ── BADGE PILL ── */
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:4px 12px;border-radius:100px;margin:3px}
+.pill-green{background:rgba(63,185,80,.15);color:var(--accent2);border:1px solid rgba(63,185,80,.3)}
+.pill-blue{background:rgba(88,166,255,.15);color:var(--accent);border:1px solid rgba(88,166,255,.3)}
+.pill-red{background:rgba(247,129,102,.15);color:var(--accent3);border:1px solid rgba(247,129,102,.3)}
+.pill-purple{background:rgba(210,168,255,.15);color:var(--accent4);border:1px solid rgba(210,168,255,.3)}
+.pill-orange{background:rgba(255,166,87,.15);color:var(--accent5);border:1px solid rgba(255,166,87,.3)}
+
+/* ── CODE BLOCK ── */
+pre{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px 24px;overflow-x:auto;margin:16px 0;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.75;color:#a5d6ff}
+pre .comment{color:var(--muted)}
+pre .key{color:var(--accent4)}
+pre .val{color:var(--accent2)}
+pre .str{color:var(--accent5)}
+
+/* ── ALERT ── */
+.alert{border-left:3px solid;padding:14px 18px;border-radius:0 8px 8px 0;margin:20px 0;font-size:13.5px}
+.alert-blue{border-color:var(--accent);background:rgba(88,166,255,.08);color:var(--accent6)}
+.alert-green{border-color:var(--accent2);background:rgba(63,185,80,.08);color:#7ee787}
+.alert-orange{border-color:var(--accent5);background:rgba(255,166,87,.08);color:var(--accent5)}
+
+/* ── TECH DECISION ── */
+.tech-decision{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:28px 0}
+@media(max-width:700px){.tech-decision{grid-template-columns:1fr}}
+.td-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px}
+.td-card .tech-name{font-size:13px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px}
+.td-card .tech-role{font-size:12px;color:var(--muted);margin-bottom:14px}
+.td-card .reasons{list-style:none;padding:0}
+.td-card .reasons li{font-size:13px;color:var(--muted);padding:5px 0 5px 22px;position:relative;border-bottom:1px solid rgba(48,54,61,.4)}
+.td-card .reasons li:last-child{border-bottom:none}
+.td-card .reasons li::before{content:'✓';position:absolute;left:0;color:var(--accent2);font-weight:700}
+
+/* ── FOOTER ── */
+footer{text-align:center;padding:48px;color:var(--muted);font-size:13px;border-top:1px solid var(--border)}
+footer strong{color:var(--text)}
+
+/* ── ANIMATIONS ── */
+.fade-in{opacity:0;transform:translateY(20px);transition:opacity .5s,transform .5s}
+.fade-in.visible{opacity:1;transform:none}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+/* ── MOBILE ── */
+@media(max-width:900px){
+  nav{transform:translateX(-100%);transition:transform .3s}
+  nav.open{transform:translateX(0)}
+  main{margin-left:0;padding:40px 24px}
+  .hamburger{display:flex;position:fixed;top:16px;left:16px;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;flex-direction:column;gap:4px}
+  .hamburger span{width:20px;height:2px;background:var(--text);border-radius:2px}
+}
+@media(min-width:901px){.hamburger{display:none}}
+</style>
+</head>
+<body>
+
+<button class="hamburger" onclick="document.querySelector('nav').classList.toggle('open')" aria-label="Menu">
+  <span></span><span></span><span></span>
+</button>
+
+<nav id="sidebar">
+  <div class="logo">
+    <h2>🍃 Doc Seeder</h2>
+    <p>Architecture Guide v1.0</p>
+  </div>
+  <ul>
+    <li class="section-label">Overview</li>
+    <li><a href="#overview" class="nav-link"><span class="dot"></span>What &amp; Why</a></li>
+    <li><a href="#architecture" class="nav-link"><span class="dot"></span>System Architecture</a></li>
+    <li><a href="#tech" class="nav-link"><span class="dot"></span>Tech Decisions</a></li>
+
+    <li class="section-label">Core Flows</li>
+    <li><a href="#seeding" class="nav-link"><span class="dot"></span>Seeding Flow</a></li>
+    <li><a href="#routing" class="nav-link"><span class="dot"></span>Composite Key Routing</a></li>
+    <li><a href="#validation" class="nav-link"><span class="dot"></span>Validation Pipeline</a></li>
+    <li><a href="#gridfs" class="nav-link"><span class="dot"></span>GridFS &amp; Safety</a></li>
+
+    <li class="section-label">API &amp; Data</li>
+    <li><a href="#api" class="nav-link"><span class="dot"></span>API Lifecycle</a></li>
+    <li><a href="#versioning" class="nav-link"><span class="dot"></span>Version History</a></li>
+    <li><a href="#export" class="nav-link"><span class="dot"></span>Export Flow</a></li>
+    <li><a href="#database" class="nav-link"><span class="dot"></span>DB State Machine</a></li>
+
+    <li class="section-label">Integration</li>
+    <li><a href="#reportgen" class="nav-link"><span class="dot"></span>ReportGen Integration</a></li>
+    <li><a href="#e2e" class="nav-link"><span class="dot"></span>End-to-End Flow</a></li>
+    <li><a href="#schema" class="nav-link"><span class="dot"></span>Data Schema</a></li>
+    <li><a href="#safety" class="nav-link"><span class="dot"></span>Safety Mechanisms</a></li>
+  </ul>
+</nav>
+
+<main>
+
+<!-- ── HERO ── -->
+<div class="hero fade-in">
+  <div class="badge">📋 Regulatory Document Management</div>
+  <h1>MongoDB<br><span>Document Seeder</span></h1>
+  <p>A production-grade standalone service for storing, versioning, and serving regulatory document bundles — with full audit trails, SHA-256 integrity, and append-only versioning.</p>
+  <div class="stats">
+    <div class="stat"><div class="num">6</div><div class="lbl">Validation Layers</div></div>
+    <div class="stat"><div class="num">3×</div><div class="lbl">Retry with Backoff</div></div>
+    <div class="stat"><div class="num">∞</div><div class="lbl">Versions per Record</div></div>
+    <div class="stat"><div class="num">SHA-256</div><div class="lbl">Integrity Checks</div></div>
+    <div class="stat"><div class="num">0</div><div class="lbl">Temp Files in ReportGen</div></div>
+  </div>
+</div>
+
+<!-- ── OVERVIEW ── -->
+<section id="overview" class="fade-in">
+  <div class="section-tag tag-blue">Overview</div>
+  <h2>What &amp; Why</h2>
+  <p class="lead">The MongoDB Document Seeder solves a specific, recurring problem in regulatory reporting: how do you safely version config files, SQL queries, and templates that multiple regulation repos share, without coupling those repos to each other?</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="icon">🎯</div>
+      <h4>The Problem</h4>
+      <p>Regulation repos (MAS-TRM, BASEL, DORA) need to share config files and SQL queries with a central report generator. Without a versioned store, changes break old reports silently.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🏗️</div>
+      <h4>The Solution</h4>
+      <p>A central seeder service that stores every version of every bundle in MongoDB + GridFS, with checksums, audit logs, and automatic CREATE / MODIFY / SKIP routing.</p>
+    </div>
+    <div class="card">
+      <div class="icon">⚡</div>
+      <h4>For ReportGen</h4>
+      <p>ReportGen reads files directly from MongoDB in memory — no download step, no temp files, ~5ms per file. The SDK client handles everything transparently.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h4>Guarantees</h4>
+      <p>Every file has a SHA-256 checksum verified on read. Modifications are atomic on replica sets. Orphaned GridFS files are automatically cleaned up on failure.</p>
+    </div>
+  </div>
+
+  <div class="why">
+    <p><strong>Why a separate service instead of putting files in Git?</strong> Git is for code history, not binary/config distribution. A versioned store lets ReportGen fetch the exact config version it needs without cloning repos, and provides a machine-readable audit log that satisfies regulatory traceability requirements. Checksums guarantee the file bytes haven't been corrupted in transit or at rest.</p>
+  </div>
+</section>
+
+<!-- ── ARCHITECTURE ── -->
+<section id="architecture" class="fade-in">
+  <div class="section-tag tag-green">Architecture</div>
+  <h2>System Architecture</h2>
+  <p class="lead">External regulation repos never write to MongoDB directly. They push file content to this service via HTTP API or CLI. The seeder owns storage, versioning, and integrity.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+graph TB
+    subgraph ExternalRepos["External Regulation Repos"]
+        R1["🏛️ MAS-TRM repo"]
+        R2["🏦 BASEL repo"]
+        R3["🇪🇺 DORA repo"]
+    end
+
+    subgraph SeederEngine["Central Seeder Engine"]
+        CLI["⌨️ CLI — Click + Rich"]
+        API["🌐 REST API — FastAPI"]
+
+        subgraph Services["Services Layer"]
+            SS["seed_service\nCREATE / MODIFY / SKIP"]
+            FS["fetch_service\nQuery records"]
+            ES["export_service\nDownload bundle"]
+            CS["cleanup_service\nRetention policy"]
+        end
+
+        subgraph Utils["Utilities"]
+            VAL["validator\n6-layer checks"]
+            GFS["gridfs_service\nUpload / Download"]
+            RET["retry decorator\nExp. backoff × 3"]
+            CHK["checksum\nSHA-256"]
+        end
+
+        DB["DatabaseManager\nConnection + Indexes + Transactions"]
+        SDK["ReportGen SDK\nDirect MongoDB client"]
+    end
+
+    subgraph MongoDB["MongoDB"]
+        META["metadata collection\nversioned records + audit log"]
+        GFSS["GridFS\nfs.files + fs.chunks\nbinary file storage"]
+    end
+
+    R1 -->|HTTP POST /api/seed| API
+    R2 -->|python -m src.cli seed| CLI
+    R3 -->|HTTP POST /api/seed| API
+
+    CLI --> SS & FS & ES & CS
+    API --> SS & FS & ES & CS
+
+    SS --> VAL & GFS & CHK & DB
+    FS --> DB
+    ES --> GFS & CHK & DB
+    CS --> GFS & DB
+    GFS --> RET
+
+    DB --> META & GFSS
+    SDK -->|direct read| META & GFSS
+    </div>
+  </div>
+
+  <div class="why">
+    <p><strong>Why this layered architecture?</strong></p>
+    <ul>
+      <li><strong>CLI + API are thin shells</strong> — all business logic lives in services, making it testable independently of the transport layer.</li>
+      <li><strong>Services are stateless</strong> — they call <code>get_db()</code> per request; the connection pool is managed by DatabaseManager.</li>
+      <li><strong>Utils are pure functions</strong> — checksum, retry, validator have no side effects, making them composable and easy to test in isolation.</li>
+      <li><strong>SDK sits beside the services</strong> — ReportGen can import it directly when co-located, skipping HTTP entirely.</li>
+    </ul>
+  </div>
+
+  <h3>Component Responsibilities</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Component</th><th>File</th><th>Responsibility</th></tr>
+      <tr><td><code>api.py</code></td><td>src/api.py</td><td>FastAPI endpoints, request validation, auth, error handlers, streaming responses</td></tr>
+      <tr><td><code>cli.py</code></td><td>src/cli.py</td><td>Click + Rich CLI — seed, create, modify, list, fetch, history, export, cleanup</td></tr>
+      <tr><td><code>seed_service</code></td><td>src/services/</td><td>Core CREATE / MODIFY / SKIP routing, composite key lookup, transaction wrapper</td></tr>
+      <tr><td><code>fetch_service</code></td><td>src/services/</td><td>All read queries — by report_id, CSI ID, region, regulation, composite, history</td></tr>
+      <tr><td><code>export_service</code></td><td>src/services/</td><td>GridFS → disk export with checksum verification per file</td></tr>
+      <tr><td><code>cleanup_service</code></td><td>src/services/</td><td>Version retention, age-based purging, dry-run support</td></tr>
+      <tr><td><code>gridfs_service</code></td><td>src/services/</td><td>GridFS upload/download/delete with retry and orphan tracking</td></tr>
+      <tr><td><code>DatabaseManager</code></td><td>src/config/database.py</td><td>MongoClient lifecycle, index creation, transaction detection, auto-reconnect</td></tr>
+      <tr><td><code>Settings</code></td><td>src/config/settings.py</td><td>All env vars typed and validated once at startup via lru_cache</td></tr>
+      <tr><td><code>ReportGenClient</code></td><td>src/sdk/client.py</td><td>Direct MongoDB reads for co-located consumers — zero HTTP overhead</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ── TECH DECISIONS ── -->
+<section id="tech" class="fade-in">
+  <div class="section-tag tag-purple">Technology</div>
+  <h2>Technology Decisions</h2>
+  <p class="lead">Every technology choice has a specific reason. Here's what we used and why it beats the alternatives.</p>
+
+  <div class="tech-decision">
+    <div class="td-card">
+      <div class="tech-name" style="color:var(--accent2)">🍃 MongoDB + GridFS</div>
+      <div class="tech-role">Storage backbone for metadata + binary files</div>
+      <ul class="reasons">
+        <li>GridFS handles files of any size without a 16MB BSON limit</li>
+        <li>Flexible schema lets each regulation add custom fields to configs</li>
+        <li>Replica set transactions give atomicity for version deactivation + insert</li>
+        <li>Native ObjectId references between metadata and GridFS chunks</li>
+        <li>Atlas support means managed infra for prod with no schema migrations</li>
+      </ul>
+    </div>
+    <div class="td-card">
+      <div class="tech-name" style="color:var(--accent)">⚡ FastAPI</div>
+      <div class="tech-role">REST API layer</div>
+      <ul class="reasons">
+        <li>Pydantic models give automatic request body validation and docs</li>
+        <li>Async-first with Uvicorn/Gunicorn for high concurrency</li>
+        <li><code>StreamingResponse</code> for ZIP and file exports without buffering</li>
+        <li>Lifespan context for clean startup/shutdown of DB connection</li>
+        <li>Auto-generated Swagger UI at <code>/api/docs</code></li>
+      </ul>
+    </div>
+    <div class="td-card">
+      <div class="tech-name" style="color:var(--accent4)">🖱️ Click + Rich</div>
+      <div class="tech-role">CLI layer</div>
+      <ul class="reasons">
+        <li>Click handles argument parsing, type coercion, and help text cleanly</li>
+        <li>Rich provides beautiful tables and panels for output</li>
+        <li>Same service layer used by both CLI and API — no duplication</li>
+        <li>Works well in CI/CD pipelines with machine-parsable exit codes</li>
+      </ul>
+    </div>
+    <div class="td-card">
+      <div class="tech-name" style="color:var(--accent5)">📐 Pydantic v2</div>
+      <div class="tech-role">Data models and validation</div>
+      <ul class="reasons">
+        <li>Schema validation at API boundaries (request bodies)</li>
+        <li><code>MetadataDocument.to_mongo_dict()</code> serializes directly to BSON-ready dict</li>
+        <li>Field defaults enforce invariants (version ≥ 1, timestamps auto-set)</li>
+        <li>Type annotations serve as living documentation</li>
+      </ul>
+    </div>
+    <div class="td-card">
+      <div class="tech-name" style="color:var(--accent3)">🔄 Append-Only Versioning</div>
+      <div class="tech-role">Version model</div>
+      <ul class="reasons">
+        <li>Old versions are deactivated, not deleted — full audit trail preserved</li>
+        <li>Any historical version can be fetched or exported at any time</li>
+        <li>Partial unique index enforces exactly one active version per composite key</li>
+        <li>Cleanup is a separate, controlled operation with dry-run support</li>
+      </ul>
+    </div>
+    <div class="td-card">
+      <div class="tech-name" style="color:var(--accent6)">🔑 Composite report_id</div>
+      <div class="tech-role">Record identifier</div>
+      <ul class="reasons">
+        <li>Deterministic: <code>csi_id_region_regulation_stem</code> is always the same for the same inputs</li>
+        <li>Human-readable in logs, making debugging much easier than opaque UUIDs</li>
+        <li>Stable across re-seeds — the same bundle always gets the same ID</li>
+        <li>4-part composite key prevents cross-contamination between different configs</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── SEEDING FLOW ── -->
+<section id="seeding" class="fade-in">
+  <div class="section-tag tag-green">Core Flow</div>
+  <h2>Seeding Flow</h2>
+  <p class="lead">The 5-step seeding pipeline pre-validates every bundle before touching the database. A single bad bundle never blocks the rest.</p>
+
+  <div class="flow-steps">
+    <div class="flow-step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Load &amp; Parse YAML Manifest</h4>
+        <p>Read <code>seed.yaml</code> with <code>yaml.safe_load()</code>. The <code>base_dir</code> is set to the manifest's parent directory — all file paths in the manifest are resolved relative to it, enabling portability.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Validate Manifest Structure</h4>
+        <p>Confirm root is a dict with a non-empty <code>bundles</code> list. Fail fast here before wasting time on individual bundle checks.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Pre-validate ALL Bundles — No DB Writes Yet</h4>
+        <p>Run all 6 validation layers on every bundle before any database operation. Bundles that fail validation are marked as errors; valid bundles proceed. <strong>This means bundle #5's error never stops bundles #1–4 from seeding.</strong> The parsed JSON config object is also carried forward here to avoid re-reading the file.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Route Each Bundle: CREATE / MODIFY / SKIP</h4>
+        <p>For each validated bundle: compute SHA-256 checksums, look up the active record by composite key, then route. See the Composite Key Routing section for the full decision tree.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Return Structured Result</h4>
+        <p>Returns <code>{"created": N, "updated": N, "skipped": N, "failed": N, "total": N, "details": [...], "errors": [...]}</code>. Per-bundle details include <code>report_id</code>, <code>version</code>, and <code>reason</code> — enough to confirm exactly what changed.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart TD
+    START(["seed_from_manifest\n manifest_path"])
+
+    S1["Step 1 — Load YAML manifest"]
+    S1V{"Valid structure?"}
+    S1E(["Raise ValidationError"])
+
+    S2["Step 2 — Pre-validate ALL bundles\nbefore any DB write"]
+    S2V{"Passes 6 validation layers?"}
+    S2F["Mark bundle FAILED\nContinue to next bundle"]
+
+    S3["Step 3 — Compute SHA-256\nfor all files in bundle"]
+    S4["Step 4 — Lookup active record\nby composite key"]
+
+    EXIST{"Active record\nexists?"}
+
+    SKIP{"All checksums\nmatch stored?"}
+    SK(["SKIP — return existing\nreport_id + version"])
+
+    MOD["MODIFY — deactivate current\ndelta-upload changed files\ninsert new version doc"]
+    CR["CREATE — upload all files to GridFS\ninsert metadata doc\nderive composite report_id"]
+
+    TRANS{"Replica set\nor Mongos?"}
+    TXN["Atomic Transaction\ndeactivate + insert"]
+    ORP["GridFSOrphanTracker\ncleanup on failure"]
+
+    DONE(["Return structured result\ncreated / updated / skipped / failed"])
+
+    START --> S1 --> S1V
+    S1V -- No --> S1E
+    S1V -- Yes --> S2 --> S2V
+    S2V -- No --> S2F --> S3
+    S2V -- Yes --> S3
+    S3 --> S4 --> EXIST
+
+    EXIST -- No --> CR --> TRANS
+    EXIST -- Yes --> SKIP
+    SKIP -- Yes --> SK --> DONE
+    SKIP -- No --> MOD --> TRANS
+
+    TRANS -- Yes --> TXN --> DONE
+    TRANS -- No --> ORP --> DONE
+    </div>
+  </div>
+
+  <div class="why">
+    <p><strong>Why pre-validate all bundles before any DB write?</strong> If validation were interleaved with DB writes, a failure on bundle #3 could leave bundles #1 and #2 committed while #3+ are not — a partial, hard-to-debug state. Pre-validation collects all errors upfront, then the DB phase only processes bundles we know are valid. This separates concerns cleanly and makes re-runs safe.</p>
+  </div>
+</section>
+
+<!-- ── COMPOSITE KEY ROUTING ── -->
+<section id="routing" class="fade-in">
+  <div class="section-tag tag-blue">Routing</div>
+  <h2>Composite Key Routing</h2>
+  <p class="lead">The 4-part composite key is the heart of the system. It uniquely identifies every logical document bundle without requiring callers to manage IDs.</p>
+
+  <div class="alert alert-blue">
+    <strong>Composite Key = </strong> <code>csi_id</code> + <code>region</code> + <code>regulation</code> + <code>json_config filename</code><br>
+    All four parts are required. The 4th part (json_config filename) allows the same regulation to have multiple distinct report configs.
+  </div>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart LR
+    IN["Bundle Input\ncsi_id, region, regulation\njson_config filename+content\nsql_file, template"]
+
+    KEY["Build Composite Key\ncsi_id + region + regulation\n+ json_config filename"]
+    LOOKUP["Query metadata collection\nfind active record matching key"]
+
+    NONE["No record found"]
+    FOUND["Record found"]
+
+    CHK1["SHA-256: json_config\nstored vs computed"]
+    CHK2["SHA-256: sql_file\nstored vs computed"]
+    CHK3["SHA-256: template\nstored vs computed"]
+    ANY{"Any checksum\nchanged?"}
+
+    CREATE(["CREATE\nNew composite report_id\nAll files uploaded\nversion = 1"])
+    SKIP(["SKIP\nNothing written\nIdempotent re-run"])
+    MODIFY(["MODIFY\nOnly changed files re-uploaded\nNew version appended\nOld version deactivated"])
+
+    IN --> KEY --> LOOKUP
+    LOOKUP --> NONE --> CREATE
+    LOOKUP --> FOUND --> CHK1 & CHK2 & CHK3 --> ANY
+    ANY -- No --> SKIP
+    ANY -- Yes --> MODIFY
+    </div>
+  </div>
+
+  <h3>report_id Format</h3>
+  <pre>Format:   {csi_id}_{region}_{regulation}_{json_config_stem}
+Example:  CSI-001_APAC_MAS-TRM_mas_trm_report
+
+Breakdown:
+  CSI-001      ← csi_id  (the project/system identifier)
+  APAC         ← region  (geographic scope)
+  MAS-TRM      ← regulation (the regulatory framework)
+  mas_trm_report ← filename stem of the json_config (without .json)</pre>
+
+  <div class="why">
+    <p><strong>Why include the json_config filename in the composite key?</strong> The same <code>(csi_id, region, regulation)</code> triple can legitimately have multiple distinct report configs — e.g. a summary report and a detailed report for the same regulation. The 4th key part (<code>json_config filename</code>) separates these without requiring callers to manage explicit IDs. This is why history and cleanup queries must use all 4 parts — using only 3 would mix logically separate records.</p>
+  </div>
+
+  <h3>Delta Upload on MODIFY</h3>
+  <p class="lead" style="margin-bottom:16px">Only changed files are re-uploaded to GridFS. Unchanged files keep their existing GridFS ObjectIds, saving storage and bandwidth.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>File</th><th>Checksum matches?</th><th>Action</th></tr>
+      <tr><td><code>json_config</code></td><td>✅ unchanged</td><td>Reuse existing GridFS ObjectId</td></tr>
+      <tr><td><code>sql_file</code></td><td>❌ changed</td><td>Upload new file → new ObjectId</td></tr>
+      <tr><td><code>template</code></td><td>✅ unchanged</td><td>Reuse existing GridFS ObjectId</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ── VALIDATION ── -->
+<section id="validation" class="fade-in">
+  <div class="section-tag tag-orange">Validation</div>
+  <h2>6-Layer Validation Pipeline</h2>
+  <p class="lead">All validation runs before any database write. Each layer catches a different class of error, and all errors are collected before reporting.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart LR
+    IN["seed.yaml\ninput"]
+
+    L1{"Layer 1\nManifest structure"}
+    L1E["FAIL\nNot a dict or\nmissing bundles key\nor empty list"]
+
+    L2{"Layer 2\nBundle fields"}
+    L2E["FAIL\nMissing required keys\nor illegal chars\nor empty values"]
+
+    L3{"Layer 3\nFile existence"}
+    L3E["FAIL\nPath not found\nor empty file\nor not regular file"]
+
+    L4{"Layer 4\nExtension allowlist"}
+    L4E["FAIL\nSQL must be .sql\nTemplate must be\n.txt .html .jinja etc"]
+
+    L5{"Layer 5\nJSON config schema"}
+    L5E["FAIL\nInvalid JSON\nor not dict root\nor missing report.name"]
+
+    L6{"Layer 6\nSQL content"}
+    L6E["FAIL\nNot UTF-8 or\nonly whitespace"]
+
+    OK(["Bundle validated\nReady for DB operations"])
+
+    IN --> L1
+    L1 -- fail --> L1E
+    L1 -- pass --> L2
+    L2 -- fail --> L2E
+    L2 -- pass --> L3
+    L3 -- fail --> L3E
+    L3 -- pass --> L4
+    L4 -- fail --> L4E
+    L4 -- pass --> L5
+    L5 -- fail --> L5E
+    L5 -- pass --> L6
+    L6 -- fail --> L6E
+    L6 -- pass --> OK
+    </div>
+  </div>
+
+  <h3>Layer Details</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Layer</th><th>What is checked</th><th>Why it matters</th></tr>
+      <tr><td><span class="pill pill-blue">1</span> Manifest</td><td>Root is dict, has <code>bundles</code> list, list non-empty</td><td>Catch malformed YAML early</td></tr>
+      <tr><td><span class="pill pill-blue">2</span> Fields</td><td>Required keys present, non-empty, string type</td><td>Prevents silent None values reaching DB</td></tr>
+      <tr><td><span class="pill pill-blue">3</span> Token format</td><td><code>csi_id</code>, <code>region</code>, <code>regulation</code> match <code>[A-Za-z0-9_\-\.]+</code></td><td>Prevents injection and composite key corruption</td></tr>
+      <tr><td><span class="pill pill-blue">4</span> File existence</td><td>File exists, is a regular file, non-empty, within <code>base_dir</code></td><td>Path traversal protection — can't escape seeds dir</td></tr>
+      <tr><td><span class="pill pill-blue">5</span> Extensions</td><td><code>.sql</code> for SQL; <code>.txt/.html/.jinja/.j2/.tmpl/.xml/.csv</code> for template</td><td>Prevents arbitrary file types being stored</td></tr>
+      <tr><td><span class="pill pill-blue">6</span> JSON schema</td><td>Valid JSON, root object, has <code>report.name</code> (non-empty string)</td><td>Ensures ReportGen always has the minimum required metadata</td></tr>
+    </table>
+  </div>
+
+  <div class="why">
+    <p><strong>Why path traversal protection in validation?</strong> Without it, a malicious <code>seed.yaml</code> could reference <code>../../etc/passwd</code> and upload system files to GridFS. The <code>base_dir</code> check ensures all file paths resolve inside the manifest's directory, regardless of <code>../</code> sequences in the path.</p>
+  </div>
+</section>
+
+<!-- ── GRIDFS & SAFETY ── -->
+<section id="gridfs" class="fade-in">
+  <div class="section-tag tag-red">Safety</div>
+  <h2>GridFS &amp; Safety Mechanisms</h2>
+  <p class="lead">Files are uploaded to GridFS with retry, orphan tracking, and checksum storage. If a metadata insert fails after files are uploaded, the orphan tracker cleans up the GridFS files.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+sequenceDiagram
+    participant SS as seed_service
+    participant OT as GridFSOrphanTracker
+    participant GS as gridfs_service
+    participant RET as retry decorator
+    participant GFS as MongoDB GridFS
+    participant META as metadata collection
+
+    SS->>OT: create tracker
+    SS->>GS: upload_to_gridfs(json_config)
+    GS->>RET: attempt 1
+    RET->>GFS: bucket.put(file bytes)
+    GFS-->>RET: gridfs_id
+    GS->>OT: tracker.track(gridfs_id)
+    GS-->>SS: gridfs_id ✓
+
+    SS->>GS: upload_to_gridfs(sql_file)
+    GS->>RET: attempt 1 — network blip
+    RET->>RET: sleep 0.5s
+    RET->>GFS: attempt 2
+    GFS-->>RET: gridfs_id
+    GS->>OT: tracker.track(gridfs_id)
+    GS-->>SS: gridfs_id ✓
+
+    SS->>META: insert_one(metadata doc)
+    alt Insert succeeds
+        META-->>SS: ok
+        SS->>OT: tracker.clear() — no orphans
+    else Insert fails
+        META-->>SS: error
+        SS->>OT: tracker.cleanup()
+        OT->>GFS: delete(json_config_id)
+        OT->>GFS: delete(sql_file_id)
+        SS-->>SS: raise DatabaseError
+    end
+    </div>
+  </div>
+
+  <h3>Retry Strategy</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Attempt</th><th>Delay before retry</th><th>Triggered by</th></tr>
+      <tr><td>1st</td><td>— (immediate)</td><td>Any retryable exception</td></tr>
+      <tr><td>2nd</td><td>0.5s</td><td><code>AutoReconnect</code>, <code>ConnectionFailure</code>, <code>NetworkTimeout</code>, <code>ServerSelectionTimeoutError</code></td></tr>
+      <tr><td>3rd</td><td>1.0s</td><td>Same</td></tr>
+      <tr><td>Exhausted</td><td>—</td><td>Raises <code>DatabaseError</code></td></tr>
+    </table>
+  </div>
+
+  <div class="why">
+    <p><strong>Why the orphan tracker pattern instead of transactions for GridFS?</strong> MongoDB transactions do not cover GridFS — GridFS operates on two separate collections (<code>fs.files</code> and <code>fs.chunks</code>) using its own internal locking. So even with replica set transactions, GridFS uploads are outside the transaction boundary. The orphan tracker compensates: it tracks every uploaded GridFS ID and bulk-deletes them if the subsequent metadata insert fails. On replica sets the metadata operations <em>are</em> transactional; GridFS cleanup is best-effort on failure.</p>
+  </div>
+</section>
+
+<!-- ── API LIFECYCLE ── -->
+<section id="api" class="fade-in">
+  <div class="section-tag tag-teal">API</div>
+  <h2>API Request Lifecycle</h2>
+  <p class="lead">Every request passes through auth, Pydantic validation, stale-connection detection, service execution, and typed exception handling.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+sequenceDiagram
+    participant Client as External Caller
+    participant API as FastAPI (api.py)
+    participant AUTH as verify_api_key
+    participant SVC as Service Layer
+    participant DB as DatabaseManager
+    participant MONGO as MongoDB
+
+    Client->>API: HTTP Request + X-API-Key header
+
+    API->>AUTH: verify key (constant-time compare)
+    alt Key invalid
+        AUTH-->>Client: 401 Unauthorized
+    end
+
+    API->>API: Pydantic model validation
+    alt Body invalid
+        API-->>Client: 422 Unprocessable Entity
+    end
+
+    API->>DB: get_db()
+    DB->>MONGO: ping (stale connection check)
+    alt Stale connection
+        DB->>MONGO: reconnect + re-index
+    end
+
+    API->>SVC: call service function
+    SVC->>MONGO: query or write
+
+    alt SeederError raised
+        SVC-->>API: RecordNotFoundError / ValidationError / etc
+        API-->>Client: 404 / 400 / 409 / 500 JSON
+    else Success
+        SVC-->>API: result dict or bytes
+        API-->>Client: 200 / 201 JSON or StreamingResponse
+    end
+    </div>
+  </div>
+
+  <h3>Security Features</h3>
+  <div class="card-grid">
+    <div class="card">
+      <div class="icon">🔑</div>
+      <h4>Constant-time Auth</h4>
+      <p><code>secrets.compare_digest()</code> prevents timing attacks — comparing <code>aaa</code> to <code>zzz</code> takes the same time as comparing equal keys.</p>
+      <span class="tag pill-blue">security</span>
+    </div>
+    <div class="card">
+      <div class="icon">🚦</div>
+      <h4>Request Size Limit</h4>
+      <p>100 MB max body enforced by middleware before parsing. Per-file base64 payloads capped at 50 MB each. Prevents memory exhaustion.</p>
+      <span class="tag pill-orange">protection</span>
+    </div>
+    <div class="card">
+      <div class="icon">🛡️</div>
+      <h4>Security Headers</h4>
+      <p><code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>, <code>X-XSS-Protection</code>, <code>Cache-Control: no-store</code> on every response.</p>
+      <span class="tag pill-purple">headers</span>
+    </div>
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h4>Production Guard</h4>
+      <p><code>ENVIRONMENT=production</code> without <code>API_KEY</code> causes boot failure. Docs UI also disabled in production. Can't accidentally ship unsecured.</p>
+      <span class="tag pill-red">guard</span>
+    </div>
+  </div>
+
+  <h3>REST Endpoints</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Method</th><th>Endpoint</th><th>Description</th><th>Auth</th></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/health</code></td><td>DB ping, transaction support, timestamp</td><td>—</td></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/records</code></td><td>List with filters and pagination</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/records/{id}</code></td><td>Fetch active record (or specific version)</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/records/{id}/history</code></td><td>All versions + audit log</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/records/{id}/export</code></td><td>Download bundle as ZIP stream</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/records/{id}/files</code></td><td>List files with metadata (for ReportGen)</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-green">GET</span></td><td><code>/api/records/{id}/files/{key}</code></td><td>Stream a single file directly from GridFS</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-blue">POST</span></td><td><code>/api/seed/bundle</code></td><td>Seed a single bundle (base64 inline)</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-blue">POST</span></td><td><code>/api/seed/manifest</code></td><td>Seed multiple bundles at once</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-blue">POST</span></td><td><code>/api/cleanup</code></td><td>Run retention cleanup</td><td>✅</td></tr>
+      <tr><td><span class="pill pill-orange">PATCH</span></td><td><code>/api/records/{id}</code></td><td>Modify record by composite report_id</td><td>✅</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ── VERSION HISTORY ── -->
+<section id="versioning" class="fade-in">
+  <div class="section-tag tag-purple">Versioning</div>
+  <h2>Version History &amp; Cleanup</h2>
+  <p class="lead">Every change produces a new version document. Old versions are deactivated (not deleted), enabling full point-in-time reconstruction. Cleanup is a controlled, separate operation.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart TD
+    subgraph VersionModel["Append-Only Version Model"]
+        V1["version=1\nactive=false\nreport_id: CSI-001_APAC_MAS-TRM_…\naudit: CREATED, DEACTIVATED"]
+        V2["version=2\nactive=false\nreport_id: CSI-001_APAC_MAS-TRM_…\naudit: MODIFIED, DEACTIVATED"]
+        V3["version=3\nactive=true\nreport_id: CSI-001_APAC_MAS-TRM_…\naudit: MODIFIED"]
+        V1 -->|"Superseded by v2"| V2 -->|"Superseded by v3"| V3
+    end
+
+    subgraph CleanupModes["Cleanup Modes"]
+        CM1["purge_old_versions\nkeep N most recent per record\nreport_id scoped"]
+        CM2["purge_all_old_versions\nglobal sweep — all composite keys\nuses 4-part grouping"]
+        CM3["purge_by_age\npurge inactive records\nolder than N days"]
+    end
+
+    subgraph PurgeSteps["Purge Steps per version"]
+        P1["Delete json_config from GridFS"]
+        P2["Delete sql_file from GridFS"]
+        P3["Delete template from GridFS"]
+        P4["delete_one metadata doc"]
+        P1 & P2 & P3 --> P4
+    end
+
+    subgraph Guards["Safety Guards"]
+        G1["active=true versions NEVER purged"]
+        G2["dry_run=True — preview only, no writes"]
+        G3["keep_versions respected — at least N inactive kept"]
+    end
+
+    CM1 & CM2 & CM3 --> PurgeSteps
+    PurgeSteps --> Guards
+    </div>
+  </div>
+
+  <div class="why">
+    <p><strong>Why append-only instead of update-in-place?</strong> Regulatory systems require auditability — you need to prove what config was active at any point in time. Update-in-place destroys that history. With append-only versioning, an auditor can query any historical version and verify the exact file bytes that were used to generate a report, backed by SHA-256 checksums. Cleanup is a separate, explicit operation that regulators can disable entirely if needed.</p>
+  </div>
+</section>
+
+<!-- ── EXPORT FLOW ── -->
+<section id="export" class="fade-in">
+  <div class="section-tag tag-orange">Export</div>
+  <h2>Export Flow</h2>
+  <p class="lead">Export reconstructs a bundle from GridFS to disk. Checksums are verified post-download to detect any GridFS corruption. The force flag allows export to proceed even with mismatches.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart TD
+    START(["export_bundle\nreport_id, output_dir\nversion, files, force"])
+
+    LOOKUP["Lookup metadata record\nactive version by default\nor specific version"]
+    NOTFOUND(["Raise RecordNotFoundError"])
+
+    FILTER["Determine file types to export\nnone = export all three\nfiles set = export subset"]
+
+    DL1["Download json_config from GridFS"]
+    DL2["Download sql_file from GridFS"]
+    DL3["Download template from GridFS\nif present in record"]
+
+    VER{"verify_checksums=True?"}
+    CMP["Compare stored SHA-256\nvs re-computed SHA-256\nfor each downloaded file"]
+    MATCH{"All match?"}
+    FORCE{"force=True?"}
+
+    WARN["Log mismatch warning\nKeep files on disk"]
+    ABORT["Remove mismatched files\nRaise ChecksumMismatchError"]
+    WRITE["Write all files to output_dir"]
+
+    DONE(["Return result dict\nreport_id, version, files\nchecksum_verified, output_dir"])
+
+    START --> LOOKUP
+    LOOKUP -- not found --> NOTFOUND
+    LOOKUP -- found --> FILTER --> DL1 & DL2 & DL3 --> VER
+    VER -- Yes --> CMP --> MATCH
+    MATCH -- Yes --> WRITE --> DONE
+    MATCH -- No --> FORCE
+    FORCE -- Yes --> WARN --> WRITE --> DONE
+    FORCE -- No --> ABORT
+    VER -- No --> WRITE --> DONE
+    </div>
+  </div>
+</section>
+
+<!-- ── DB STATE MACHINE ── -->
+<section id="database" class="fade-in">
+  <div class="section-tag tag-teal">Database</div>
+  <h2>Database Connection Lifecycle</h2>
+  <p class="lead">The DatabaseManager singleton handles connection pooling, ping-based stale detection, transaction capability detection, and index creation — all in one place.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+stateDiagram-v2
+    [*] --> Disconnected
+
+    Disconnected --> Connecting : get_db() or connect() called
+    Connecting --> Connected : ping OK + indexes ensured
+    Connecting --> Failed : ConnectionFailure or Timeout
+    Failed --> Disconnected : raise DatabaseError
+
+    Connected --> InUse : service call starts
+    InUse --> Connected : operation complete
+
+    Connected --> StaleDetected : get_db() ping fails
+    StaleDetected --> Closing : close() called
+    Closing --> Connecting : auto-reconnect
+
+    Connected --> Closing : close() or reset_db() called
+    Closing --> Disconnected : client.close()
+    </div>
+  </div>
+
+  <h3>Index Strategy</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Index</th><th>Type</th><th>Why</th></tr>
+      <tr><td><code>report_id</code> (partial: active=true)</td><td>Unique partial</td><td>Enforces exactly one active version per report_id at DB level</td></tr>
+      <tr><td><code>report_id + active</code></td><td>Compound</td><td>Fast lookup for <code>find_one(report_id, active=True)</code></td></tr>
+      <tr><td><code>report_id + version</code></td><td>Compound</td><td>Efficient version history queries</td></tr>
+      <tr><td><code>csi_id + regulation + region + original_files.json_config + active</code></td><td>Unique partial</td><td>Enforces composite key uniqueness for active records</td></tr>
+      <tr><td><code>csi_id + regulation + region + original_files.json_config</code></td><td>Compound</td><td>Fast composite key lookups for routing decisions</td></tr>
+      <tr><td><code>csi_id</code>, <code>region</code>, <code>regulation</code>, <code>active</code></td><td>Single-field</td><td>Supports filter-by queries in list and fetch endpoints</td></tr>
+    </table>
+  </div>
+
+  <div class="why">
+    <p><strong>Why partial unique indexes?</strong> A regular unique index on <code>report_id</code> would prevent multiple versions of the same record — which we need for the version history. A <em>partial</em> unique index on <code>{active: true}</code> only enforces uniqueness among active documents, allowing unlimited inactive versions of the same <code>report_id</code>. This is the right tool for append-only versioning.</p>
+  </div>
+</section>
+
+<!-- ── REPORTGEN INTEGRATION ── -->
+<section id="reportgen" class="fade-in">
+  <div class="section-tag tag-green">Integration</div>
+  <h2>ReportGen Integration</h2>
+  <p class="lead">ReportGen has two ways to access files. The direct MongoDB path is recommended when co-located — it reads from GridFS in memory with zero HTTP overhead and no temp files.</p>
+
+  <div class="card-grid">
+    <div class="card" style="border-color:var(--accent2)">
+      <div class="icon">🗄️</div>
+      <h4>Direct MongoDB (Recommended)</h4>
+      <p>ReportGen connects to the same MongoDB instance and reads files directly from GridFS using <code>ReportGenClient</code>. Files arrive as bytes in memory — no disk I/O, no temp files, ~5ms per file.</p>
+      <span class="tag pill-green">~5ms per file</span>
+    </div>
+    <div class="card">
+      <div class="icon">🌐</div>
+      <h4>HTTP API</h4>
+      <p>ReportGen calls <code>GET /api/records/{id}/files/{key}</code> to stream a file over HTTP. Works across networks and VPCs. ~50–200ms per file depending on network latency.</p>
+      <span class="tag pill-blue">cross-network</span>
+    </div>
+  </div>
+
+  <h3>Direct MongoDB — Code Flow</h3>
+  <pre><span class="comment"># ReportGen imports the SDK client (co-located scenario)</span>
+<span class="key">from</span> src.sdk.client <span class="key">import</span> ReportGenClient
+
+<span class="key">with</span> ReportGenClient.from_env() <span class="key">as</span> client:
+    <span class="comment"># All reads happen in memory — no temp files</span>
+    config = client.get_json_config(<span class="str">"CSI-001_APAC_MAS-TRM_mas_trm_report"</span>)
+    sql    = client.get_sql_query(<span class="str">"CSI-001_APAC_MAS-TRM_mas_trm_report"</span>)
+    tmpl   = client.get_template(<span class="str">"CSI-001_APAC_MAS-TRM_mas_trm_report"</span>)
+
+    <span class="comment"># config is already a Python dict — no json.loads() needed</span>
+    <span class="comment"># sql is already a Python string — no file.read() needed</span>
+    report_name = config[<span class="str">"report"</span>][<span class="str">"name"</span>]
+
+    <span class="comment"># Execute against your data database</span>
+    data = execute_query(sql, params={<span class="str">"start"</span>: <span class="str">"2026-01-01"</span>})
+    output = render(tmpl, data=data, config=config)</pre>
+
+  <div class="why">
+    <p><strong>Why include the repo as a dependency instead of downloading files?</strong> The old pattern — download config file, store in <code>/tmp</code>, read, then clean up — has multiple failure modes: disk full, permission errors, stale temp files if the process crashes, and race conditions under concurrent access. Direct MongoDB reads eliminate all of these: the file bytes come straight from GridFS into Python memory, processed, and discarded. No temp files = no cleanup, no disk I/O, no race conditions.</p>
+  </div>
+</section>
+
+<!-- ── END-TO-END FLOW ── -->
+<section id="e2e" class="fade-in">
+  <div class="section-tag tag-blue">End-to-End</div>
+  <h2>End-to-End Data Flow</h2>
+  <p class="lead">From a regulation repo pushing a <code>seed.yaml</code> to ReportGen reading the config in memory — the complete journey.</p>
+
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart TB
+    subgraph Input["Input Sources"]
+        YAML["seed.yaml via CLI\nor CI/CD pipeline"]
+        HTTP["HTTP POST /api/seed\nbase64-encoded inline"]
+    end
+
+    subgraph Validation["Validation — 6 layers"]
+        V["manifest structure\nfields + token format\nfile existence + path traversal\nextensions\nJSON schema\nSQL content"]
+    end
+
+    subgraph Routing["Routing — per bundle"]
+        CK["Compute SHA-256\nfor all files"]
+        QL["Query metadata collection\nby 4-part composite key"]
+        RT{{"Route:\nCREATE / MODIFY / SKIP"}}
+    end
+
+    subgraph Storage["Storage"]
+        GU["GridFS upload\nper changed file only\nwith retry × 3\nand orphan tracking"]
+        MI["metadata.insert_one\ncomposite report_id\nversion N\naudit log entry\nSHA-256 checksums\nGridFS ObjectId refs"]
+    end
+
+    subgraph MongoDB["MongoDB"]
+        MC["metadata collection\nversioned records"]
+        GC["GridFS chunks\nbinary file data"]
+    end
+
+    subgraph Consumers["Consumers"]
+        RC["ReportGen SDK\nDirect MongoDB\nget_json_config()\nget_sql_query()\n~5ms in memory"]
+        RA["ReportGen HTTP\nGET /files/json_config\nGET /files/sql_file\n~50-200ms streaming"]
+        CLI2["CLI export\nexport_bundle()\nfiles written to disk\nchecksums verified"]
+    end
+
+    YAML & HTTP --> V --> CK --> QL --> RT
+    RT -- CREATE or MODIFY --> GU --> MI
+    RT -- SKIP --> MC
+    MI --> MC & GC
+    MC & GC --> RC & RA & CLI2
+    </div>
+  </div>
+</section>
+
+<!-- ── DATA SCHEMA ── -->
+<section id="schema" class="fade-in">
+  <div class="section-tag tag-purple">Schema</div>
+  <h2>Data Storage Schema</h2>
+  <p class="lead">Each record in the metadata collection is a complete snapshot. No JOINs needed — all audit, checksum, and file reference data is embedded.</p>
+
+  <pre><span class="comment">// metadata collection — one document per version</span>
+{
+  <span class="key">"report_id"</span>: <span class="str">"CSI-001_APAC_MAS-TRM_mas_trm_report"</span>,   <span class="comment">// composite deterministic ID</span>
+  <span class="key">"csi_id"</span>:    <span class="str">"CSI-001"</span>,
+  <span class="key">"region"</span>:    <span class="str">"APAC"</span>,
+  <span class="key">"regulation"</span>: <span class="str">"MAS-TRM"</span>,
+  <span class="key">"name"</span>:      <span class="str">"mas_trm_report.json"</span>,             <span class="comment">// json_config filename</span>
+  <span class="key">"version"</span>:   3,
+  <span class="key">"active"</span>:    true,                               <span class="comment">// only one active per composite key</span>
+  <span class="key">"mongoInsertedTs"</span>: <span class="str">"2026-05-18T12:00:00.000000"</span>,
+  <span class="key">"mongoUpdatedTs"</span>:  <span class="str">"2026-05-18T12:00:00.000000"</span>,
+
+  <span class="key">"original_files"</span>: {
+    <span class="key">"json_config"</span>: <span class="str">"mas_trm_report.json"</span>,        <span class="comment">// 4th composite key part</span>
+    <span class="key">"sql_file"</span>:    <span class="str">"mas_trm_query.sql"</span>,
+    <span class="key">"template"</span>:    <span class="str">"mas_trm_template.txt"</span>          <span class="comment">// may be null</span>
+  },
+
+  <span class="key">"file_contents"</span>: {
+    <span class="key">"json_config_id"</span>: <span class="str">"64abc123..."</span>,           <span class="comment">// GridFS ObjectId as string</span>
+    <span class="key">"sql_file_id"</span>:    <span class="str">"64abc456..."</span>,
+    <span class="key">"template_id"</span>:    <span class="str">"64abc789..."</span>             <span class="comment">// may be null</span>
+  },
+
+  <span class="key">"checksums"</span>: {
+    <span class="key">"json_config"</span>: <span class="str">"sha256:a1b2c3..."</span>,         <span class="comment">// verified on every export/read</span>
+    <span class="key">"sql_file"</span>:    <span class="str">"sha256:d4e5f6..."</span>,
+    <span class="key">"template"</span>:    <span class="str">"sha256:g7h8i9..."</span>
+  },
+
+  <span class="key">"file_sizes"</span>: { <span class="key">"json_config"</span>: 2048, <span class="key">"sql_file"</span>: 512, <span class="key">"template"</span>: 1024 },
+
+  <span class="key">"audit_log"</span>: [
+    { <span class="key">"action"</span>: <span class="str">"CREATED"</span>,     <span class="key">"timestamp"</span>: <span class="str">"…"</span>, <span class="key">"details"</span>: <span class="str">"Initial seed from manifest"</span> },
+    { <span class="key">"action"</span>: <span class="str">"DEACTIVATED"</span>, <span class="key">"timestamp"</span>: <span class="str">"…"</span>, <span class="key">"details"</span>: <span class="str">"Superseded by version 2"</span> },
+    { <span class="key">"action"</span>: <span class="str">"MODIFIED"</span>,    <span class="key">"timestamp"</span>: <span class="str">"…"</span>, <span class="key">"details"</span>: <span class="str">"Changed: sql_file (v2→v3)"</span> }
+  ]
+}</pre>
+
+  <div class="alert alert-green">
+    <strong>GridFS storage:</strong> File bytes are stored in <code>fs.chunks</code> in 255 KB pieces. <code>fs.files</code> holds metadata (filename, contentType, checksum, upload_date). The metadata collection holds ObjectId references to <code>fs.files</code> entries.
+  </div>
+</section>
+
+<!-- ── SAFETY ── -->
+<section id="safety" class="fade-in">
+  <div class="section-tag tag-red">Safety</div>
+  <h2>Safety Mechanisms</h2>
+  <p class="lead">Multiple independent layers protect data integrity — from the network layer down to individual file bytes.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mechanism</th><th>Where</th><th>What it prevents</th></tr>
+      <tr><td>SHA-256 checksums</td><td>Stored at upload, verified on export</td><td>Detects GridFS corruption — mismatched bytes trigger <code>ChecksumMismatchError</code></td></tr>
+      <tr><td>Delta uploads</td><td>MODIFY path in seed_service</td><td>Unchanged files reuse existing GridFS ObjectIds — saves storage, reduces risk</td></tr>
+      <tr><td>MongoDB Transactions</td><td>Replica set environments</td><td>Deactivation + new version insert are atomic — no half-written state</td></tr>
+      <tr><td>GridFSOrphanTracker</td><td>All upload operations</td><td>On standalone (no transactions), uploaded GridFS files are cleaned up if metadata insert fails</td></tr>
+      <tr><td>Pre-validation</td><td>seed_from_manifest Step 2</td><td>All bundles validated before any DB write — one bad bundle never blocks others</td></tr>
+      <tr><td>Exponential retry</td><td>gridfs_service via retry decorator</td><td>Transient network errors retried 3× at 0.5s → 1s → 2s before failing</td></tr>
+      <tr><td>Auto-reconnect</td><td>get_db() ping check</td><td>Stale TCP connections silently replaced before they cause request failures</td></tr>
+      <tr><td>Production guard</td><td>Settings._validate_required()</td><td><code>ENVIRONMENT=production</code> without <code>API_KEY</code> → process exits at startup</td></tr>
+      <tr><td>Secure URI logging</td><td>DatabaseManager.connect()</td><td>Full MongoDB URI (may contain credentials) never logged — only host shown</td></tr>
+      <tr><td>Path traversal protection</td><td>validate_file_exists()</td><td>File paths in seed.yaml cannot escape the manifest directory via <code>../</code></td></tr>
+      <tr><td>Partial unique indexes</td><td>Database._ensure_indexes()</td><td>DB-level enforcement of one active version per composite key — even if app logic fails</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  Built with <strong>FastAPI · MongoDB · GridFS · Click · Pydantic · Python 3.9+</strong><br>
+  <span style="margin-top:8px;display:block">MongoDB Document Seeder — Regulatory Document Management Engine</span>
+</footer>
+
+</main>
+
+<script>
+  // Mermaid init
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1c2128',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#30363d',
+      lineColor: '#58a6ff',
+      secondaryColor: '#1c2128',
+      tertiaryColor: '#0d1117',
+      nodeBorder: '#30363d',
+      clusterBkg: '#161b22',
+      titleColor: '#e6edf3',
+      edgeLabelBackground: '#161b22',
+      actorBkg: '#1c2128',
+      actorBorder: '#58a6ff',
+      actorTextColor: '#e6edf3',
+      signalColor: '#58a6ff',
+      signalTextColor: '#e6edf3',
+      labelBoxBkgColor: '#1c2128',
+      labelBoxBorderColor: '#30363d',
+      labelTextColor: '#e6edf3',
+      loopTextColor: '#e6edf3',
+      noteBkgColor: '#1c2128',
+      noteTextColor: '#e6edf3',
+      noteBorderColor: '#30363d',
+      activationBkgColor: '#58a6ff',
+      sequenceNumberColor: '#e6edf3',
+    },
+    flowchart: { curve: 'basis', padding: 20 },
+    sequence: { actorMargin: 60, width: 160 },
+  });
+
+  // Scroll spy
+  const sections = document.querySelectorAll('section[id], div.hero');
+  const links = document.querySelectorAll('.nav-link');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const id = e.target.id || 'hero';
+        links.forEach(l => {
+          l.classList.toggle('active', l.getAttribute('href') === '#' + id);
+        });
+      }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  sections.forEach(s => obs.observe(s));
+
+  // Fade-in on scroll
+  const fadeObs = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+  }, { threshold: 0.07 });
+  document.querySelectorAll('.fade-in').forEach(el => fadeObs.observe(el));
+
+  // Close nav on mobile link click
+  document.querySelectorAll('.nav-link').forEach(l => {
+    l.addEventListener('click', () => document.querySelector('nav').classList.remove('open'));
+  });
+</script>
+</body>
+</html>

@@ -159,7 +159,7 @@ def seed_from_manifest(manifest_path: Union[str, Path]) -> Dict[str, Any]:
         }
 
         try:
-            status, report_id, version, reason = _process_bundle(bundle, config)
+            status, report_id, version, reason = process_bundle(bundle, config)
             detail["status"] = status
             detail["report_id"] = report_id
             detail["version"] = version
@@ -198,7 +198,7 @@ def seed_from_manifest(manifest_path: Union[str, Path]) -> Dict[str, Any]:
 # Internal: single bundle dispatcher
 # ---------------------------------------------------------------------------
 
-def _process_bundle(bundle: dict, config: dict) -> Tuple[str, Optional[str], Optional[int], str]:
+def process_bundle(bundle: dict, config: dict) -> Tuple[str, Optional[str], Optional[int], str]:
     """
     Determine whether to create/skip/modify a bundle.
     Returns (status, report_id, version, reason).

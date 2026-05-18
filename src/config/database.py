@@ -205,7 +205,7 @@ def get_db() -> DatabaseManager:
         return _default_instance
     # Detect stale TCP connections (e.g. after network blip or idle timeout)
     try:
-        _default_instance.client.admin.command("ping", check=False)
+        _default_instance.client.admin.command("ping")
     except Exception:
         logger.warning("database.reconnecting stale connection detected — reconnecting")
         try:

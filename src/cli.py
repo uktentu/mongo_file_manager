@@ -168,6 +168,7 @@ def list_records(show_all):
     """List all active records."""
     from src.services.fetch_service import list_all_active
 
+    db = None
     try:
         db = get_db()
         if show_all:
@@ -194,7 +195,7 @@ def list_records(show_all):
 
         for rec in records:
             active_str = "✅" if rec.get("active", False) else "❌"
-            uploaded = rec.get("uploaded_at", "")
+            uploaded = rec.get("mongoInsertedTs", "")
             if hasattr(uploaded, "strftime"):
                 uploaded = uploaded.strftime("%Y-%m-%d %H:%M")
             table.add_row(
@@ -208,7 +209,8 @@ def list_records(show_all):
         console.print(f"[bold red]Error:[/] {exc.message}", style="red")
         sys.exit(1)
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @cli.command()
@@ -236,7 +238,7 @@ def history(report_id):
 
         for rec in records:
             active_str = "[green]✅ ACTIVE[/]" if rec.get("active") else "[dim]❌ inactive[/]"
-            uploaded = rec.get("uploaded_at", "")
+            uploaded = rec.get("mongoInsertedTs", "")
             if hasattr(uploaded, "strftime"):
                 uploaded = uploaded.strftime("%Y-%m-%d %H:%M:%S")
 

@@ -14,7 +14,7 @@ from typing import Optional, Any, Dict, List
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, validator
 
@@ -153,6 +153,18 @@ async def seeder_error_handler(request: Request, exc: SeederError):
         status_code=500,
         content={"error": "Internal Server Error", "message": msg, "details": _safe_error_response(msg, exc.details)},
     )
+
+
+# ── Documentation ─────────────────────────────────────────────────────────
+
+_DOCS_HTML = Path(__file__).parent.parent / "docs" / "index.html"
+
+
+@app.get("/api/details", response_class=HTMLResponse, include_in_schema=False)
+async def project_details():
+    if not _DOCS_HTML.exists():
+        raise HTTPException(status_code=404, detail="docs/index.html not found")
+    return HTMLResponse(content=_DOCS_HTML.read_text(encoding="utf-8"))
 
 
 # ── Models ─────────────────────────────────────────────────────────────────
@@ -325,6 +337,7 @@ async def get_record_history(report_id: str):
             "csi_id": anchor["csi_id"],
             "regulation": anchor["regulation"],
             "region": anchor["region"],
+            "original_files.json_config": anchor["original_files"]["json_config"],
         }).sort("version", 1)
     )
 
@@ -517,7 +530,7 @@ def _decode_and_write(b64_content: str, filename: str, tmpdir: str) -> Path:
 @app.post("/api/seed/bundle", dependencies=[Depends(verify_api_key)], status_code=201)
 async def seed_bundle(req: SeedBundleRequest):
     """Seed a single bundle from base64-encoded file contents."""
-    from src.services.seed_service import _process_bundle as _pb
+    from src.services.seed_service import process_bundle
     from src.utils.validator import validate_json_config, validate_sql_content
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -540,7 +553,7 @@ async def seed_bundle(req: SeedBundleRequest):
                 "template": str(tmpl_path) if tmpl_path else None,
             }
 
-            status, report_id, version, reason = _pb(bundle, config)
+            status, report_id, version, reason = process_bundle(bundle, config)
 
             logger.info(
                 "api.seed_bundle csi_id=%s regulation=%s region=%s status=%s report_id=%s",
@@ -563,7 +576,7 @@ async def seed_bundle(req: SeedBundleRequest):
 @app.post("/api/seed/manifest", dependencies=[Depends(verify_api_key)])
 async def seed_manifest(req: SeedManifestRequest):
     """Seed multiple bundles at once from inline base64-encoded file contents."""
-    from src.services.seed_service import _process_bundle as _pb
+    from src.services.seed_service import process_bundle
     from src.utils.validator import validate_json_config, validate_sql_content
 
     if not req.bundles:
@@ -597,7 +610,7 @@ async def seed_manifest(req: SeedManifestRequest):
                     "template": str(tmpl_path) if tmpl_path else None,
                 }
 
-                status, report_id, version, reason = _pb(bundle, config)
+                status, report_id, version, reason = process_bundle(bundle, config)
                 detail.update({"status": status, "report_id": report_id, "version": version, "reason": reason})
                 results[status] += 1
                 logger.info("api.seed_manifest bundle=%s status=%s report_id=%s", label, status, report_id)
